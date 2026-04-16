@@ -136,22 +136,26 @@ class TestUtilityFunctions:
         username = get_windows_username()
         assert username == "mock_user"
 
-    def test_setup_logging_info(self, caplog):
+    def test_setup_logging_info(self):
         """Test logging setup at INFO level."""
         import logging
 
         setup_logging(verbose=False)
-        logging.getLogger().setLevel(logging.INFO)
-        logger = logging.getLogger("test_info_logger")
-        logger.info("test info message")
-        assert "test info" in caplog.text
+        root_logger = logging.getLogger()
+        assert root_logger.level == logging.DEBUG
+        assert len(root_logger.handlers) > 0
+        for handler in root_logger.handlers:
+            if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
+                assert handler.level == logging.INFO
 
-    def test_setup_logging_debug(self, caplog):
+    def test_setup_logging_debug(self):
         """Test logging setup at DEBUG level."""
         import logging
 
         setup_logging(verbose=True)
-        logging.getLogger().setLevel(logging.DEBUG)
-        logger = logging.getLogger("test_debug_logger")
-        logger.debug("test debug message")
-        assert "test debug" in caplog.text
+        root_logger = logging.getLogger()
+        assert root_logger.level == logging.DEBUG
+        assert len(root_logger.handlers) > 0
+        for handler in root_logger.handlers:
+            if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
+                assert handler.level == logging.DEBUG

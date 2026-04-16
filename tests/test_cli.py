@@ -108,10 +108,26 @@ class TestMain:
         result = main(args)
         assert result == 0
 
-    def test_main_keyboard_interrupt(self, monkeypatch, mock_windows_username):
-        """Test keyboard interrupt handling."""
+    def test_main_keyboard_interrupt(self, monkeypatch, mock_windows_username, temp_dir):
+        """Test keyboard interrupt handling during confirmation."""
         import sys
-        monkeypatch.setattr("builtins.input", lambda x: (_ for _ in ()).throw(KeyboardInterrupt))
-        args = ["--dry-run"]
-        result = main(args)
-        assert result == 130
+        import builtins
+        import os
+
+        config_path = os.path.join(temp_dir, "test_config.json")
+        import json
+        with open(config_path, "w") as f:
+            json.dump({
+                "user_name": "mock_user",
+                "paths": [temp_dir],
+                "dry_run": False
+            }, f)
+
+        original_input = builtins.input
+        builtins.input = lambda x: (_ for _ in ()).throw(KeyboardInterrupt)
+        try:
+            args = ["--config", config_path]
+            result = main(args)
+            assert result == 130
+        finally:
+            builtins.input = original_input
