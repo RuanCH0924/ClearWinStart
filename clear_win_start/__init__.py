@@ -9,6 +9,16 @@ __version__ = "1.0.0"
 __author__ = "Ruan CH"
 
 from clear_win_start.core import StartMenuOrganizer
-from clear_win_start.utils import Configuration
+from clear_win_start.utils import Configuration, ConfigurationWizard, setup_logging
+from clear_win_start.preview import PreviewWindow, InteractiveConfirm, create_preview_from_stats
 
-__all__ = ["StartMenuOrganizer", "Configuration", "__version__"]
+__all__ = [
+    "StartMenuOrganizer",
+    "Configuration",
+    "ConfigurationWizard",
+    "setup_logging",
+    "PreviewWindow",
+    "InteractiveConfirm",
+    "create_preview_from_stats",
+    "__version__"
+]

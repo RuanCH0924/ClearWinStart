@@ -10,7 +10,19 @@ from typing import List, Optional
 from clear_win_start import __version__
 from clear_win_start.core import StartMenuOrganizer
 from clear_win_start.exceptions import StartMenuOrganizerError
-from clear_win_start.utils import Configuration, get_windows_username, setup_logging
+from clear_win_start.utils import (
+    Configuration,
+    ConfigurationWizard,
+    get_windows_username,
+    get_default_log_path,
+    setup_logging
+)
+from clear_win_start.preview import (
+    PreviewWindow,
+    InteractiveConfirm,
+    create_preview_from_stats,
+    ImpactLevel
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +127,32 @@ Examples:
         help="Only validate paths and configuration, do not make changes",
     )
 
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default=None,
+        help="Path to log file (default: auto-generated in AppData)",
+    )
+
+    parser.add_argument(
+        "--wizard",
+        action="store_true",
+        help="Run interactive configuration wizard",
+    )
+
+    parser.add_argument(
+        "--save-config",
+        type=str,
+        default=None,
+        help="Save generated config to specified path",
+    )
+
+    parser.add_argument(
+        "--preview",
+        action="store_true",
+        help="Show preview window with detailed operation plan",
+    )
+
     return parser
 
 
@@ -175,6 +213,45 @@ def print_stats(stats: dict) -> None:
     print("=" * 50)
 
 
+def run_wizard(args: argparse.Namespace) -> int:
+    """Run the configuration wizard.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        Exit code (0 for success, 1 for error).
+    """
+    setup_logging(verbose=args.verbose)
+
+    try:
+        wizard = ConfigurationWizard()
+        config = wizard.run()
+
+        save_config = args.save_config or input(
+            "\nSave configuration to file? (press Enter for 'config.json' or enter path): "
+        ).strip()
+
+        if not save_config:
+            save_config = "config.json"
+
+        output_path = wizard.save_config(config, save_config if save_config else None)
+
+        print(f"\nConfiguration saved to: {output_path}")
+        print("\nYou can now run the tool with:")
+        print(f"  clear-win-start --config {output_path}")
+
+        return 0
+
+    except KeyboardInterrupt:
+        print("\n\nConfiguration cancelled by user.")
+        return 130
+    except Exception as e:
+        logger.error(f"Wizard error: {e}")
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """Main entry point for the CLI.
 
@@ -187,7 +264,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
 
-    setup_logging(verbose=args.verbose)
+    if args.wizard:
+        return run_wizard(args)
+
+    log_file = args.log_file if args.log_file else get_default_log_path()
+    setup_logging(verbose=args.verbose, log_file=log_file)
 
     try:
         config = build_config(args)
@@ -227,9 +308,39 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("=" * 50 + "\n")
 
         organizer = StartMenuOrganizer(config)
-        stats = organizer.organize(auto_confirm=args.auto_confirm)
 
-        print_stats(stats)
+        if args.preview:
+            print(PreviewWindow.color("\n正在扫描并生成预览...\n", 'info'))
+            stats = organizer.organize(auto_confirm=True, preview_only=True)
+
+            preview_report = create_preview_from_stats(
+                stats,
+                config.paths,
+                config.user_name
+            )
+
+            preview_output = PreviewWindow.render_preview(preview_report)
+            print(preview_output)
+
+            print("\n")
+            action = InteractiveConfirm.show_execute_menu()
+
+            if action == 'cancel':
+                print(PreviewWindow.color("\n操作已取消", 'warning'))
+                return 0
+            elif action == 'backup_only':
+                print(PreviewWindow.color("\n✓ 备份功能开发中（建议使用 --dry-run 预览）", 'info'))
+                return 0
+            elif action == 'rescan':
+                print(PreviewWindow.color("\n正在重新扫描...\n", 'info'))
+                return main(argv)
+            else:
+                print(PreviewWindow.color("\n正在执行操作...\n", 'info'))
+                stats = organizer.organize(auto_confirm=True, preview_only=False)
+                print_stats(stats)
+        else:
+            stats = organizer.organize(auto_confirm=args.auto_confirm)
+            print_stats(stats)
 
         if args.dry_run:
             print("\nThis was a dry run. To apply changes, run without --dry-run.")

@@ -5,6 +5,7 @@ Core functionality for organizing Windows Start Menu.
 import logging
 import os
 import shutil
+from datetime import datetime
 from typing import List, Optional
 
 from clear_win_start.exceptions import (
@@ -13,6 +14,11 @@ from clear_win_start.exceptions import (
     ShortcutParseError,
 )
 from clear_win_start.utils import Configuration
+from clear_win_start.preview import (
+    PreviewItem,
+    ActionType,
+    create_preview_from_stats
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +39,21 @@ class StartMenuOrganizer:
             "files_deleted": 0,
             "shortcuts_cleaned": 0,
         }
+        self.dry_run_plan: List[dict] = []
+        self.dry_run_summary: dict = {
+            "total_folders": 0,
+            "total_files_to_move": 0,
+            "total_files_to_delete": 0,
+            "total_shortcuts_to_clean": 0,
+            "estimated_impact": "Low",
+        }
 
-    def organize(self, auto_confirm: bool = False) -> dict:
+    def organize(self, auto_confirm: bool = False, preview_only: bool = False) -> dict:
         """Organize all configured Start Menu paths.
 
         Args:
             auto_confirm: If True, skip confirmation prompts.
+            preview_only: If True, only generate preview without executing.
 
         Returns:
             Dictionary containing operation statistics.
@@ -47,7 +62,7 @@ class StartMenuOrganizer:
 
         for path in self.config.paths:
             try:
-                self._process_path(path, auto_confirm)
+                self._process_path(path, auto_confirm, preview_only)
             except PathNotFoundError:
                 logger.warning(f"Path does not exist: {path}")
             except PermissionError as e:
@@ -63,13 +78,23 @@ class StartMenuOrganizer:
             "files_deleted": 0,
             "shortcuts_cleaned": 0,
         }
+        self.dry_run_plan = []
+        self.dry_run_summary = {
+            "total_folders": 0,
+            "total_files_to_move": 0,
+            "total_files_to_delete": 0,
+            "total_shortcuts_to_clean": 0,
+            "estimated_impact": "Low",
+        }
 
-    def _process_path(self, path: str, auto_confirm: bool = False) -> None:
+    def _process_path(self, path: str, auto_confirm: bool = False,
+                      preview_only: bool = False) -> None:
         """Process a single Start Menu path.
 
         Args:
             path: Path to process.
             auto_confirm: If True, skip confirmation prompts.
+            preview_only: If True, only generate preview without executing.
 
         Raises:
             PathNotFoundError: If path does not exist.
@@ -83,7 +108,7 @@ class StartMenuOrganizer:
 
         logger.info(f"Processing: {path}")
 
-        if not auto_confirm:
+        if not auto_confirm and not self.config.dry_run and not preview_only:
             response = input(f"Process this path? (y/n): ").strip().lower()
             if response not in ["y", "yes"]:
                 logger.info("Skipped by user")
@@ -91,6 +116,12 @@ class StartMenuOrganizer:
 
         folders = self._get_folders_to_process(path)
         logger.info(f"Found {len(folders)} folders to process")
+
+        if self.config.dry_run or preview_only:
+            self._generate_dry_run_plan(path, folders)
+
+        if preview_only:
+            return
 
         for folder in folders:
             self._process_folder(path, folder)
@@ -101,6 +132,126 @@ class StartMenuOrganizer:
             self._clean_invalid_shortcuts(path)
 
         logger.info(f"Completed: {path}")
+
+    def _generate_dry_run_plan(self, path: str, folders: List[str]) -> None:
+        """Generate detailed dry run plan for the given path.
+
+        Args:
+            path: Base path being processed.
+            folders: List of folders to be processed.
+        """
+        logger.info("=" * 60)
+        logger.info("DRY RUN - Execution Plan Report")
+        logger.info("=" * 60)
+        logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"Base Path: {path}")
+        logger.info("")
+
+        plan_entry = {
+            "path": path,
+            "folders_to_process": [],
+            "files_to_move": [],
+            "files_to_delete": [],
+            "shortcuts_to_validate": [],
+        }
+
+        for folder in folders:
+            folder_path = os.path.join(path, folder)
+            plan_entry["folders_to_process"].append(folder)
+            self.dry_run_summary["total_folders"] += 1
+
+            logger.info(f"[FOLDER] Will process: {folder}")
+
+            try:
+                for item in os.listdir(folder_path):
+                    item_path = os.path.join(folder_path, item)
+                    dest_path = os.path.join(path, item)
+
+                    if os.path.isfile(item_path):
+                        plan_entry["files_to_move"].append({
+                            "source": item_path,
+                            "destination": dest_path
+                        })
+                        self.dry_run_summary["total_files_to_move"] += 1
+                        logger.info(f"  [MOVE] {item_path} -> {dest_path}")
+
+                    elif os.path.isdir(item_path):
+                        for nested_item in os.listdir(item_path):
+                            nested_path = os.path.join(item_path, nested_item)
+                            nested_dest = os.path.join(path, nested_item)
+
+                            if os.path.isfile(nested_path):
+                                plan_entry["files_to_move"].append({
+                                    "source": nested_path,
+                                    "destination": nested_dest
+                                })
+                                self.dry_run_summary["total_files_to_move"] += 1
+                                logger.info(f"  [MOVE] {nested_path} -> {nested_dest}")
+
+            except OSError as e:
+                logger.error(f"Error scanning folder {folder}: {e}")
+
+        for item in os.listdir(path):
+            item_path = os.path.join(path, item)
+
+            if any(keyword in item for keyword in self.config.delete_keywords):
+                matched_keywords = [k for k in self.config.delete_keywords if k in item]
+                plan_entry["files_to_delete"].append({
+                    "path": item_path,
+                    "type": "file" if os.path.isfile(item_path) else "folder",
+                    "reason": f"Contains keyword: {matched_keywords}"
+                })
+                self.dry_run_summary["total_files_to_delete"] += 1
+                logger.info(f"[DELETE] {item_path} (keyword match)")
+
+            elif item.lower().endswith(".lnk") and self.config.check_shortcuts:
+                plan_entry["shortcuts_to_validate"].append(item_path)
+                self.dry_run_summary["total_shortcuts_to_clean"] += 1
+
+        self.dry_run_plan.append(plan_entry)
+        self._update_impact_assessment()
+        self._print_dry_run_summary()
+
+        logger.info("=" * 60)
+        logger.info("End of Dry Run Report")
+        logger.info("=" * 60)
+
+    def _update_impact_assessment(self) -> None:
+        """Update the estimated impact level based on operations."""
+        total_operations = (
+            self.dry_run_summary["total_files_to_move"] +
+            self.dry_run_summary["total_files_to_delete"] +
+            self.dry_run_summary["total_shortcuts_to_clean"]
+        )
+
+        if total_operations > 50:
+            self.dry_run_summary["estimated_impact"] = "High"
+        elif total_operations > 20:
+            self.dry_run_summary["estimated_impact"] = "Medium"
+        else:
+            self.dry_run_summary["estimated_impact"] = "Low"
+
+    def _print_dry_run_summary(self) -> None:
+        """Print dry run summary statistics."""
+        logger.info("")
+        logger.info("Summary:")
+        logger.info(f"  - Folders to process: {self.dry_run_summary['total_folders']}")
+        logger.info(f"  - Files to move: {self.dry_run_summary['total_files_to_move']}")
+        logger.info(f"  - Files/folders to delete: {self.dry_run_summary['total_files_to_delete']}")
+        logger.info(f"  - Shortcuts to validate: {self.dry_run_summary['total_shortcuts_to_clean']}")
+        logger.info(f"  - Estimated Impact: {self.dry_run_summary['estimated_impact']}")
+        logger.info("")
+
+    def get_dry_run_report(self) -> dict:
+        """Get the complete dry run report.
+
+        Returns:
+            Dictionary containing the full dry run plan and summary.
+        """
+        return {
+            "plan": self.dry_run_plan,
+            "summary": self.dry_run_summary.copy()
+        }
 
     def _get_folders_to_process(self, path: str) -> List[str]:
         """Get list of folders to process.

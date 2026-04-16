@@ -25,22 +25,22 @@ jobs:
 
       - name: Lint with flake8
         run: |
-          flake8 organize_start_menu tests --max-line-length=100 --extend-ignore=E203,W503
+          flake8 clear_win_start tests --max-line-length=100 --extend-ignore=E203,W503
         continue-on-error: true
 
       - name: Check black formatting
         run: |
-          black --check organize_start_menu tests
+          black --check clear_win_start tests
         continue-on-error: true
 
       - name: Check isort formatting
         run: |
-          isort --check-only organize_start_menu tests
+          isort --check-only clear_win_start tests
         continue-on-error: true
 
       - name: Type check with mypy
         run: |
-          mypy organize_start_menu --ignore-missing-imports
+          mypy clear_win_start --ignore-missing-imports
         continue-on-error: true
 
   test:
@@ -66,7 +66,7 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest --cov=organize_start_menu --cov-report=xml --cov-report=term tests/
+          pytest --cov=clear_win_start --cov-report=xml --cov-report=term tests/
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
