@@ -126,9 +126,58 @@ clear-win-start [-h] [--version] [--user-name USER_NAME] [--config CONFIG]
 
 ## ⚙️ Configuration
 
-### Configuration File Format
+### Configuration File Types
 
-Create a `config.json` file:
+The project uses two types of configuration files:
+
+1. **`default-config.json`** - Default configuration file (defines global default behavior)
+2. **`config.json`** - User configuration file (customizes runtime behavior)
+
+### Default Configuration (default-config.json)
+
+This file defines all default behaviors including:
+- Delete keywords
+- Preserved folders
+- Logging settings
+- Backup settings
+- Preview settings
+
+**Create or edit `default-config.json`:**
+
+```json
+{
+    "version": "1.0.0",
+    "description": "ClearWinStart Default Configuration",
+
+    "user_name": "",
+
+    "paths": {
+        "user_start_menu": "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs",
+        "system_start_menu": "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs"
+    },
+
+    "neglect_folders": [
+        "Accessibility",
+        "Accessories",
+        "Administrative Tools",
+        "Startup",
+        "System Tools"
+    ],
+
+    "delete_keywords": {
+        "chinese": ["卸载", "官网", "更新", "帮助", "意见", "设置", "关于"],
+        "english": ["install", "Website", "Setting", "Documentation", "Help"],
+        "other": [".url"]
+    },
+
+    "check_shortcuts": true,
+    "dry_run": false
+}
+```
+
+### User Configuration (config.json)
+
+Used for runtime configuration, can fully override defaults:
 
 ```json
 {
@@ -154,6 +203,24 @@ Create a `config.json` file:
     "dry_run": false
 }
 ```
+
+### Configuration File Search Order
+
+The program searches for configuration files in the following order:
+
+1. `default-config.json` in current directory
+2. `default-config.json` in project root
+3. `%APPDATA%\ClearWinStart\default-config.json`
+4. Use built-in defaults
+
+### Environment Variable Support
+
+Configuration files support environment variables:
+
+- `%APPDATA%` - User application data directory
+- `%USERPROFILE%` - User home directory
+- `%LOCALAPPDATA%` - Local application data directory
+- `%PROGRAMFILES%` - Program files directory
 
 ### Default Settings
 

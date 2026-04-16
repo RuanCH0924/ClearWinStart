@@ -1,0 +1,72 @@
+{
+    "version": "1.0.0",
+    "description": "ClearWinStart 默认配置文件 - 可根据需要自定义",
+
+    "user_name": "",
+
+    "paths": {
+        "user_start_menu": "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs",
+        "system_start_menu": "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs"
+    },
+
+    "neglect_folders": [
+        "Accessibility",
+        "Accessories",
+        "Administrative",
+        "Administrative Tools",
+        "desktop.ini",
+        "Maintenance",
+        "StartUp",
+        "Startup",
+        "System Tools",
+        "Tools",
+        "Windows PowerShell"
+    ],
+
+    "delete_keywords": {
+        "chinese": [
+            "卸载",
+            "官网",
+            "更新",
+            "帮助",
+            "意见",
+            "设置",
+            "关于"
+        ],
+        "english": [
+            "install",
+            "Website",
+            "Setting",
+            "Documentation",
+            "Help"
+        ],
+        "other": [
+            ".url"
+        ],
+        "description": "文件/文件夹名称包含这些关键词将被删除"
+    },
+
+    "check_shortcuts": true,
+
+    "dry_run": false,
+
+    "logging": {
+        "enabled": true,
+        "path": "%APPDATA%\\ClearWinStart\\logs",
+        "max_size_mb": 10,
+        "backup_count": 5,
+        "verbose": false
+    },
+
+    "backup": {
+        "enabled": false,
+        "auto_backup_before_operation": true,
+        "backup_path": "%APPDATA%\\ClearWinStart\\backups"
+    },
+
+    "preview": {
+        "show_impact_level": true,
+        "max_items_display": 20,
+        "auto_confirm_low_impact": false
+    }
+}

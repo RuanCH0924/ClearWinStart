@@ -115,6 +115,128 @@ def create_log_filter_sensitive() -> logging.Filter:
     return SensitiveInfoFilter()
 
 
+def expand_env_vars(path: str) -> str:
+    """Expand environment variables in path.
+
+    Args:
+        path: Path string with environment variables.
+
+    Returns:
+        Expanded path with environment variables replaced.
+    """
+    if not path:
+        return path
+
+    result = os.path.expandvars(path)
+    result = result.replace('%APPDATA%', os.environ.get('APPDATA', ''))
+    result = result.replace('%USERPROFILE%', os.environ.get('USERPROFILE', ''))
+    result = result.replace('%LOCALAPPDATA%', os.environ.get('LOCALAPPDATA', ''))
+    result = result.replace('%PROGRAMFILES%', os.environ.get('PROGRAMFILES', ''))
+    result = result.replace('%PROGRAMFILES(X86)%', os.environ.get('PROGRAMFILES(X86)', ''))
+    return result
+
+
+class DefaultConfig:
+    """Default configuration values loaded from config file."""
+
+    _instance = None
+    _config_loaded = False
+
+    NEGLECT_FOLDERS = [
+        "Accessibility",
+        "Accessories",
+        "Administrative",
+        "Administrative Tools",
+        "desktop.ini",
+        "Maintenance",
+        "StartUp",
+        "Startup",
+        "System Tools",
+        "Tools",
+        "Windows PowerShell",
+    ]
+
+    DELETE_KEYWORDS = [
+        "卸载", "官网", "更新", "帮助", "意见", "设置", "关于",
+        "install", "Website", "Setting", "Documentation", "Help",
+        ".url",
+    ]
+
+    @classmethod
+    def load_from_file(cls, config_path: Optional[str] = None) -> None:
+        """Load default configuration from JSON file.
+
+        Args:
+            config_path: Path to config file. If None, searches in standard locations.
+        """
+        if cls._config_loaded:
+            return
+
+        if config_path is None:
+            config_path = cls._find_config_file()
+
+        if config_path and os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+                if "neglect_folders" in data and data["neglect_folders"]:
+                    cls.NEGLECT_FOLDERS = data["neglect_folders"]
+
+                if "delete_keywords" in data:
+                    keywords = data["delete_keywords"]
+                    if isinstance(keywords, list):
+                        cls.DELETE_KEYWORDS = keywords
+                    elif isinstance(keywords, dict):
+                        all_keywords = []
+                        for key in ["chinese", "english", "other"]:
+                            if key in keywords:
+                                all_keywords.extend(keywords[key])
+                        if all_keywords:
+                            cls.DELETE_KEYWORDS = all_keywords
+
+                cls._config_loaded = True
+                logger.info(f"Loaded default configuration from {config_path}")
+
+            except Exception as e:
+                logger.warning(f"Failed to load config from {config_path}: {e}")
+
+    @classmethod
+    def _find_config_file(cls) -> Optional[str]:
+        """Find config file in standard locations.
+
+        Returns:
+            Path to config file or None if not found.
+        """
+        search_paths = [
+            os.path.join(os.getcwd(), "default-config.json"),
+            os.path.join(os.path.dirname(__file__), "..", "default-config.json"),
+            os.path.join(os.environ.get('APPDATA', ''), "ClearWinStart", "default-config.json"),
+        ]
+
+        for path in search_paths:
+            if os.path.exists(path):
+                return path
+
+        return None
+
+    @classmethod
+    def reset(cls) -> None:
+        """Reset loaded configuration to defaults."""
+        cls._config_loaded = False
+        cls.NEGLECT_FOLDERS = [
+            "Accessibility", "Accessories", "Administrative",
+            "Administrative Tools", "desktop.ini", "Maintenance",
+            "StartUp", "Startup", "System Tools", "Tools",
+            "Windows PowerShell",
+        ]
+        cls.DELETE_KEYWORDS = [
+            "卸载", "官网", "更新", "帮助", "意见", "设置", "关于",
+            "install", "Website", "Setting", "Documentation", "Help",
+            ".url",
+        ]
+
+
 @dataclass
 class Configuration:
     """Configuration for the Start Menu organizer."""
@@ -127,44 +249,22 @@ class Configuration:
     dry_run: bool = False
 
     def __post_init__(self) -> None:
-        """Initialize default paths if not provided."""
+        """Initialize default configuration from config file."""
+        DefaultConfig.load_from_file()
+
         if not self.paths:
             self.paths = [
                 fr"C:\Users\{self.user_name}\AppData\Roaming\Microsoft\Windows\Start Menu\Programs",
                 r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs",
             ]
+        else:
+            self.paths = [expand_env_vars(p) for p in self.paths]
 
         if not self.neglect_folders:
-            self.neglect_folders = [
-                "Accessibility",
-                "Accessories",
-                "Administrative",
-                "Tools",
-                "desktop.ini",
-                "Startup",
-                "System Tools",
-                "Administrative Tools",
-                "Windows PowerShell",
-                "Maintenance",
-                "StartUp",
-            ]
+            self.neglect_folders = DefaultConfig.NEGLECT_FOLDERS.copy()
 
         if not self.delete_keywords:
-            self.delete_keywords = [
-                "卸载",
-                "官网",
-                "更新",
-                "帮助",
-                "意见",
-                "设置",
-                "关于",
-                "install",
-                "Website",
-                "Setting",
-                "Documentation",
-                "Help",
-                ".url",
-            ]
+            self.delete_keywords = DefaultConfig.DELETE_KEYWORDS.copy()
 
     @classmethod
     def from_file(cls, config_path: str) -> "Configuration":
@@ -194,20 +294,35 @@ class Configuration:
         if missing_fields:
             raise ConfigurationError(f"Missing required fields: {', '.join(missing_fields)}")
 
+        paths = data.get("paths", [])
+        if isinstance(paths, dict):
+            paths = [expand_env_vars(p) for p in paths.values()]
+        elif isinstance(paths, list):
+            paths = [expand_env_vars(p) for p in paths]
+
+        delete_keywords = data.get("delete_keywords", [])
+        if isinstance(delete_keywords, dict):
+            all_keywords = []
+            for key in ["chinese", "english", "other"]:
+                if key in delete_keywords:
+                    all_keywords.extend(delete_keywords[key])
+            delete_keywords = all_keywords if all_keywords else []
+
         return cls(
             user_name=data["user_name"],
-            paths=data.get("paths", []),
+            paths=paths,
             neglect_folders=data.get("neglect_folders", []),
-            delete_keywords=data.get("delete_keywords", []),
+            delete_keywords=delete_keywords,
             check_shortcuts=data.get("check_shortcuts", True),
             dry_run=data.get("dry_run", False),
         )
 
-    def to_file(self, config_path: str) -> None:
+    def to_file(self, config_path: str, include_metadata: bool = True) -> None:
         """Save configuration to a JSON file.
 
         Args:
             config_path: Path to save the configuration file.
+            include_metadata: Whether to include version and description metadata.
         """
         data = {
             "user_name": self.user_name,
@@ -217,6 +332,10 @@ class Configuration:
             "check_shortcuts": self.check_shortcuts,
             "dry_run": self.dry_run,
         }
+
+        if include_metadata:
+            data["version"] = "1.0.0"
+            data["description"] = "Generated by ClearWinStart"
 
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)

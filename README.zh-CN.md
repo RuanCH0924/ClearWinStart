@@ -126,9 +126,58 @@ clear-win-start [-h] [--version] [--user-name USER_NAME] [--config CONFIG]
 
 ## ⚙️ 配置
 
-### 配置文件格式
+### 配置文件类型
 
-创建 `config.json` 文件：
+项目使用两种配置文件：
+
+1. **`default-config.json`** - 默认配置文件（定义全局默认行为）
+2. **`config.json`** - 用户配置文件（自定义运行时配置）
+
+### 默认配置文件（default-config.json）
+
+此文件定义所有默认行为，包括：
+- 删除关键词
+- 保留文件夹
+- 日志设置
+- 备份设置
+- 预览设置
+
+**创建或编辑 `default-config.json`：**
+
+```json
+{
+    "version": "1.0.0",
+    "description": "ClearWinStart 默认配置文件",
+
+    "user_name": "",
+
+    "paths": {
+        "user_start_menu": "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs",
+        "system_start_menu": "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs"
+    },
+
+    "neglect_folders": [
+        "Accessibility",
+        "Accessories",
+        "Administrative Tools",
+        "Startup",
+        "System Tools"
+    ],
+
+    "delete_keywords": {
+        "chinese": ["卸载", "官网", "更新", "帮助", "意见", "设置", "关于"],
+        "english": ["install", "Website", "Setting", "Documentation", "Help"],
+        "other": [".url"]
+    },
+
+    "check_shortcuts": true,
+    "dry_run": false
+}
+```
+
+### 用户配置文件（config.json）
+
+用于运行时配置，可完全覆盖默认值：
 
 ```json
 {
@@ -154,6 +203,24 @@ clear-win-start [-h] [--version] [--user-name USER_NAME] [--config CONFIG]
     "dry_run": false
 }
 ```
+
+### 配置文件查找顺序
+
+程序按以下顺序查找配置文件：
+
+1. 当前目录下的 `default-config.json`
+2. 项目根目录下的 `default-config.json`
+3. `%APPDATA%\ClearWinStart\default-config.json`
+4. 使用内置默认值
+
+### 环境变量支持
+
+配置文件中支持环境变量：
+
+- `%APPDATA%` - 用户应用数据目录
+- `%USERPROFILE%` - 用户主目录
+- `%LOCALAPPDATA%` - 本地应用数据目录
+- `%PROGRAMFILES%` - 程序文件目录
 
 ### 默认设置
 
