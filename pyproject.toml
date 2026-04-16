@@ -1,0 +1,137 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ClearWinStart"
+version = "1.0.0"
+description = "Windows Start Menu Organization Tool - Flatten nested folders and clean invalid shortcuts"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Ruan CH"}
+]
+maintainers = [
+    {name = "Ruan CH"}
+]
+keywords = [
+    "windows",
+    "start-menu",
+    "organization",
+    "shortcuts",
+    "cleanup",
+    "productivity"
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: Microsoft :: Windows :: Windows 10",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Desktop Environment",
+    "Topic :: System :: Systems Administration",
+]
+requires-python = ">=3.8"
+
+dependencies = []
+
+[project.optional-dependencies]
+windows = [
+    "winshell>=0.6",
+    "pywin32>=300",
+]
+dev = [
+    "ClearWinStart[windows]",
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "flake8>=6.0",
+    "black>=23.0",
+    "isort>=5.12",
+    "mypy>=1.0",
+    "tox>=4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/RuanCH/ClearWinStart"
+Documentation = "https://github.com/RuanCH/ClearWinStart#readme"
+Repository = "https://github.com/RuanCH/ClearWinStart.git"
+Issues = "https://github.com/RuanCH/ClearWinStart/issues"
+Discussions = "https://github.com/RuanCH/ClearWinStart/discussions"
+
+[project.scripts]
+clear-win-start = "clear_win_start.cli:main"
+
+[tool.setuptools]
+packages = ["clear_win_start"]
+
+[tool.setuptools.package-data]
+clear_win_start = ["py.typed"]
+
+[tool.black]
+line-length = 100
+target-version = ["py38", "py39", "py310", "py311", "py312"]
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+skip = [".git", ".venv", "build", "dist"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+exclude = ["tests", "build", "dist"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["clear_win_start"]
+branch = true
+omit = ["tests/*", "*/__main__.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class.*\\bProtocol\\):",
+]
+exclude_dirs = ["tests", "docs"]
