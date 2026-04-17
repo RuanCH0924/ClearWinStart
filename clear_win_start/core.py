@@ -408,7 +408,18 @@ class StartMenuOrganizer:
             if not target_path:
                 return False
 
-            return os.path.exists(target_path)
+            expanded_path = os.path.expandvars(target_path)
+            if os.path.exists(expanded_path):
+                return True
+
+            if os.path.exists(target_path):
+                return True
+
+            target_dir = os.path.dirname(target_path)
+            if target_dir and os.path.exists(os.path.expandvars(target_dir)):
+                return True
+
+            return False
 
         except Exception as e:
             logger.debug(f"Shortcut validation failed for {shortcut_path}: {e}")
