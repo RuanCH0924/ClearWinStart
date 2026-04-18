@@ -295,16 +295,26 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print("All paths and configuration are valid.")
                 return 0
 
-        if args.dry_run:
-            print("DRY RUN MODE - No changes will be made\n")
-
         print("=" * 50)
-        print("Windows Start Menu Organization Tool")
+        print("ClearWinStart")
         print("=" * 50)
         print(f"\nUser: {config.user_name}")
-        print(f"Paths: {', '.join(config.paths)}")
-        print(f"Dry run: {config.dry_run}")
+        print("\nPaths:")
+        for path in config.paths:
+            if "ruanc" in path.lower():
+                print(f"  [USER] {path}")
+            elif "programdata" in path.lower():
+                print(f"  [SYS]  {path}")
+            else:
+                print(f"  {path}")
+        print(f"\nDry run: {config.dry_run}")
         print(f"Check shortcuts: {config.check_shortcuts}")
+        
+        if args.dry_run:
+            print("\n" + "⚠️  " + "=" * 46)
+            print("⚠️  DRY RUN MODE - No changes will be made  ⚠️")
+            print("⚠️  " + "=" * 46 + "\n")
+        
         print("=" * 50 + "\n")
 
         organizer = StartMenuOrganizer(config)

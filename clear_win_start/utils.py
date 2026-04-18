@@ -5,6 +5,7 @@ Utility functions and classes for ClearWinStart.
 import json
 import logging
 import os
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
@@ -16,9 +17,47 @@ from clear_win_start.exceptions import ConfigurationError, PathNotFoundError
 logger = logging.getLogger(__name__)
 
 
-LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+LOG_FORMAT = "%(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-LOG_FORMAT_DETAILED = "%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s"
+LOG_FORMAT_DETAILED = "[%(filename)s:%(lineno)d] - %(message)s"
+
+
+class ColoredFormatter(logging.Formatter):
+    """Colored formatter for console output."""
+    
+    COLORS = {
+        'DEBUG': '\033[90m',      # Gray
+        'INFO': '\033[0m',        # Default
+        'WARNING': '\033[93m',    # Yellow
+        'ERROR': '\033[91m',      # Red
+        'CRITICAL': '\033[91m',   # Red
+        'SUCCESS': '\033[92m',    # Green
+    }
+    
+    PREFIXES = {
+        'ERROR': '❌ ',
+        'WARNING': '⚠️  ',
+        'CRITICAL': '🚨 ',
+    }
+    
+    RESET = '\033[0m'
+    
+    def format(self, record: logging.LogRecord) -> str:
+        """Format log record with colors."""
+        # Store original message
+        message = record.getMessage()
+        
+        # Add prefix for certain levels
+        if record.levelname in self.PREFIXES:
+            message = self.PREFIXES[record.levelname] + message
+        
+        # Get color for level
+        color = self.COLORS.get(record.levelname, '')
+        
+        # Format with color
+        if color:
+            return f"{color}{message}{self.RESET}"
+        return message
 
 SENSITIVE_KEYWORDS = [
     "password", "passwd", "pwd", "secret", "token", "api_key", "apikey",
@@ -70,9 +109,9 @@ def setup_logging(
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
-    console_handler = logging.StreamHandler()
+    console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(console_level)
-    console_formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+    console_formatter = ColoredFormatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
     console_handler.setFormatter(console_formatter)
     root_logger.addHandler(console_handler)
 
@@ -91,8 +130,6 @@ def setup_logging(
         file_formatter = logging.Formatter(LOG_FORMAT_DETAILED, datefmt=LOG_DATE_FORMAT)
         file_handler.setFormatter(file_formatter)
         root_logger.addHandler(file_handler)
-
-        logging.info(f"Logging to file: {log_file}")
 
     logging.getLogger("clear_win_start").setLevel(logging.DEBUG if verbose else logging.INFO)
 
@@ -196,7 +233,6 @@ class DefaultConfig:
                             cls.DELETE_KEYWORDS = all_keywords
 
                 cls._config_loaded = True
-                logger.info(f"Loaded default configuration from {config_path}")
 
             except Exception as e:
                 logger.warning(f"Failed to load config from {config_path}: {e}")
@@ -663,3 +699,46 @@ Summary:
 
         config.to_file(output_path)
         return output_path
+
+
+def shorten_start_menu_path(full_path: str, user_start_menu: Optional[str] = None, 
+                            system_start_menu: Optional[str] = None) -> str:
+    """Shorten start menu paths for cleaner display in logs.
+
+    Args:
+        full_path: The full path to shorten.
+        user_start_menu: User's start menu base path.
+        system_start_menu: System start menu base path.
+
+    Returns:
+        Shortened path with standard prefix.
+    """
+    import os as _os
+    
+    # Default paths
+    if user_start_menu is None:
+        user_start_menu = _os.path.join(
+            _os.environ.get("APPDATA", ""),
+            "Microsoft", "Windows", "Start Menu", "Programs"
+        )
+    
+    if system_start_menu is None:
+        system_start_menu = r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs"
+    
+    # Check if path matches user start menu
+    if full_path.startswith(user_start_menu):
+        relative = full_path[len(user_start_menu):].lstrip(_os.sep)
+        return f"[USER] {relative}"
+    
+    # Check if path matches system start menu
+    if full_path.startswith(system_start_menu):
+        relative = full_path[len(system_start_menu):].lstrip(_os.sep)
+        return f"[SYS] {relative}"
+    
+    # For other paths, try to use user profile shorthand
+    user_profile = _os.environ.get("USERPROFILE", "")
+    if user_profile and full_path.startswith(user_profile):
+        relative = full_path[len(user_profile):].lstrip(_os.sep)
+        return f"~/{relative}"
+    
+    return full_path

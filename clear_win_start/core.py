@@ -13,7 +13,7 @@ from clear_win_start.exceptions import (
     PathNotFoundError,
     ShortcutParseError,
 )
-from clear_win_start.utils import Configuration
+from clear_win_start.utils import Configuration, shorten_start_menu_path
 from clear_win_start.preview import (
     PreviewItem,
     ActionType,
@@ -106,7 +106,7 @@ class StartMenuOrganizer:
         if not os.access(path, os.W_OK):
             raise PermissionError(path)
 
-        logger.info(f"Processing: {path}")
+        logger.info(f"Processing: {shorten_start_menu_path(path)}")
 
         if not auto_confirm and not self.config.dry_run and not preview_only:
             response = input(f"Process this path? (y/n): ").strip().lower()
@@ -120,7 +120,7 @@ class StartMenuOrganizer:
         if self.config.dry_run or preview_only:
             self._generate_dry_run_plan(path, folders)
 
-        if preview_only:
+        if preview_only or self.config.dry_run:
             return
 
         for folder in folders:
@@ -131,7 +131,7 @@ class StartMenuOrganizer:
         if self.config.check_shortcuts:
             self._clean_invalid_shortcuts(path)
 
-        logger.info(f"Completed: {path}")
+        logger.info(f"Completed: {shorten_start_menu_path(path)}")
 
     def _generate_dry_run_plan(self, path: str, folders: List[str]) -> None:
         """Generate detailed dry run plan for the given path.
@@ -140,11 +140,8 @@ class StartMenuOrganizer:
             path: Base path being processed.
             folders: List of folders to be processed.
         """
-        logger.info("=" * 60)
-        logger.info("DRY RUN - Execution Plan Report")
-        logger.info("=" * 60)
-        logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info(f"Base Path: {path}")
+        logger.info("")
+        logger.info("Execution Plan:")
         logger.info("")
 
         plan_entry = {
@@ -173,7 +170,9 @@ class StartMenuOrganizer:
                             "destination": dest_path
                         })
                         self.dry_run_summary["total_files_to_move"] += 1
-                        logger.info(f"  [MOVE] {item_path} -> {dest_path}")
+                        short_src = shorten_start_menu_path(item_path)
+                        short_dst = shorten_start_menu_path(dest_path)
+                        logger.info(f"  [MOVE] {short_src} -> {short_dst}")
 
                     elif os.path.isdir(item_path):
                         for nested_item in os.listdir(item_path):
@@ -186,7 +185,9 @@ class StartMenuOrganizer:
                                     "destination": nested_dest
                                 })
                                 self.dry_run_summary["total_files_to_move"] += 1
-                                logger.info(f"  [MOVE] {nested_path} -> {nested_dest}")
+                                short_src = shorten_start_menu_path(nested_path)
+                                short_dst = shorten_start_menu_path(nested_dest)
+                                logger.info(f"  [MOVE] {short_src} -> {short_dst}")
 
             except OSError as e:
                 logger.error(f"Error scanning folder {folder}: {e}")
@@ -202,7 +203,8 @@ class StartMenuOrganizer:
                     "reason": f"Contains keyword: {matched_keywords}"
                 })
                 self.dry_run_summary["total_files_to_delete"] += 1
-                logger.info(f"[DELETE] {item_path} (keyword match)")
+                short_path = shorten_start_menu_path(item_path)
+                logger.info(f"[DELETE] {short_path} (keyword match)")
 
             elif item.lower().endswith(".lnk") and self.config.check_shortcuts:
                 plan_entry["shortcuts_to_validate"].append(item_path)
@@ -211,10 +213,6 @@ class StartMenuOrganizer:
         self.dry_run_plan.append(plan_entry)
         self._update_impact_assessment()
         self._print_dry_run_summary()
-
-        logger.info("=" * 60)
-        logger.info("End of Dry Run Report")
-        logger.info("=" * 60)
 
     def _update_impact_assessment(self) -> None:
         """Update the estimated impact level based on operations."""
@@ -318,7 +316,7 @@ class StartMenuOrganizer:
                 self._process_nested_folder(item_path, base_path)
 
         shutil.rmtree(source_path, ignore_errors=True)
-        logger.debug(f"Removed nested folder: {source_path}")
+        logger.debug(f"Removed nested folder: {shorten_start_menu_path(source_path)}")
 
     def _move_file(self, source: str, dest: str) -> None:
         """Move a file to destination.
@@ -328,16 +326,18 @@ class StartMenuOrganizer:
             dest: Destination file path.
         """
         if self.config.dry_run:
-            logger.info(f"[DRY RUN] Would move: {source} -> {dest}")
+            short_src = shorten_start_menu_path(source)
+            short_dst = shorten_start_menu_path(dest)
+            logger.info(f"[DRY RUN] Would move: {short_src} -> {short_dst}")
             return
 
         if os.path.exists(dest):
             if os.path.isfile(dest):
                 os.remove(dest)
-                logger.debug(f"Removed existing file: {dest}")
+                logger.debug(f"Removed existing file: {shorten_start_menu_path(dest)}")
             else:
                 shutil.rmtree(dest, ignore_errors=True)
-                logger.debug(f"Removed existing folder: {dest}")
+                logger.debug(f"Removed existing folder: {shorten_start_menu_path(dest)}")
 
         shutil.move(source, dest)
         logger.debug(f"Moved file: {os.path.basename(source)}")
