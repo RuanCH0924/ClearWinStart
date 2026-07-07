@@ -1,153 +1,152 @@
 # ClearWinStart
 
-**Windows Start Menu Organization Tool**
+**Windows 开始菜单整理工具**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python versions](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/downloads/)
 [![GitHub stars](https://img.shields.io/github/stars/RuanCH/ClearWinStart)](https://github.com/RuanCH/ClearWinStart/stargazers)
 
-An easy-to-use tool for organizing Windows Start Menu by flattening nested folders and cleaning up invalid shortcuts.
+一个易于使用的 Windows 开始菜单整理工具，可以扁平化嵌套文件夹并清理无效的快捷方式。
 
-**Original author: © Ruan CH**
-
----
-
-## ✨ Features
-
-### Core Functionality
-- **Flatten Nested Folders**: Automatically extract shortcuts from subfolders to the Start Menu root directory
-- **Smart Cleanup**: Automatically delete items containing specified keywords (uninstall, website, update, help, settings, etc.)
-- **Invalid Shortcut Detection**: Automatically detect and remove shortcuts pointing to non-existent targets
-- **Preserve System Folders**: Smart filtering to keep essential system folders (Accessories, Administrative Tools, Startup, etc.)
-
-### Advanced Features
-- **🔍 Interactive Preview Window**: Beautiful GUI-like preview of all operations before execution with impact assessment
-- **📋 Dry Run Mode**: Preview changes without making modifications with detailed execution plan
-- **📝 Configuration Wizard**: Interactive step-by-step configuration generator
-- **📁 File Logging**: Automatic log rotation with sensitive information filtering
-- **⚙️ Fully Configurable**: JSON configuration support with sensible defaults
-
-### Developer Experience
-- **💻 CLI Interface**: Easy-to-use command-line interface with verbose logging
-- **🐍 Python API**: Programmatic access for integration with other tools
-- **✅ Type Hints**: Full type annotation support for better IDE integration
-- **🧪 Well Tested**: Comprehensive unit test coverage
+**原作者: © Ruan CH**
 
 ---
 
-## 📋 Requirements
+## ✨ 功能特点
 
-- Windows 10 or Windows 11
-- Python 3.8 or higher
-- Administrator privileges (for modifying system Start Menu)
+### 核心功能
+- **📂 扁平化嵌套文件夹**: 自动将子文件夹中的快捷方式提取到开始菜单根目录
+- **🧹 智能清理**: 自动删除包含指定关键词的项目（卸载、官网、更新、帮助、设置等）
+- **🔍 无效快捷方式检测**: 自动检测并删除指向不存在目标路径的快捷方式
+- **🛡️ 保留系统文件夹**: 智能过滤，保留必要的系统文件夹（附件、管理工具、启动、系统工具等）
+
+### 高级功能
+- **📋 Dry Run 模式**: 详细预览执行计划，不实际修改系统
+- **📝 配置文件向导**: 交互式分步配置生成器
+- **📁 文件日志**: 自动日志轮转，敏感信息过滤
+- **⚙️ 完全可配置**: JSON 配置文件支持，开箱即用的默认设置
+
+### 开发者体验
+- **💻 CLI 界面**: 易于使用的命令行界面，支持详细日志
+- **🐍 Python API**: 程序化访问，便于集成到其他工具
+- **✅ 类型提示**: 完整的类型注解支持，提升 IDE 体验
+- **🧪 完善测试**: 全面的单元测试覆盖
 
 ---
 
-## 🚀 Quick Start
+## 📋 系统要求
 
-### Installation
+- Windows 10 或 Windows 11
+- Python 3.8 或更高版本
+- 管理员权限（用于修改系统开始菜单）
+
+---
+
+## 🚀 快速开始
+
+### 安装
 
 ```bash
-# Clone the repository
+# 克隆仓库
 git clone https://github.com/RuanCH/ClearWinStart.git
 cd ClearWinStart
 
-# Install in development mode
+# 开发模式安装
 pip install -e ".[dev]"
 ```
 
-### Basic Usage
+### 基本用法
 
 ```bash
-# Interactive preview mode (recommended for first-time users)
-clear-win-start --preview --user-name YOUR_USERNAME
+# 交互式预览模式（推荐首次使用）
+clear-win-start --preview --user-name 你的用户名
 
-# Automatic mode
-clear-win-start --auto-confirm --user-name YOUR_USERNAME
+# 自动模式
+clear-win-start --auto-confirm --user-name 你的用户名
 
-# Dry run (preview only)
-clear-win-start --dry-run --user-name YOUR_USERNAME
+# 预览模式（仅预览，不执行）
+clear-win-start --dry-run --user-name 你的用户名
 
-# With configuration file
+# 使用配置文件
 clear-win-start --config config.json
 ```
 
 ---
 
-## 🎯 Usage Guide
+## 🎯 使用指南
 
-### Interactive Preview Window
+### 交互式预览窗口
 
-The preview window provides a beautiful, interactive interface to review all operations before execution:
-
-```bash
-clear-win-start --preview --user-name YOUR_USERNAME
-```
-
-**Preview Window Features:**
-- 📊 Impact level assessment (Low/Medium/High)
-- 📂 Organized by operation type
-- ✅ Clear action confirmation
-- 🎨 Color-coded information
-- ⚠️ Warning for potentially dangerous operations
-
-### Configuration Wizard
-
-Generate configuration files interactively:
+预览窗口提供美观的交互式界面，在执行操作前预览所有变更：
 
 ```bash
-clear-win-start --wizard --save-config my-config.json
+clear-win-start --preview --user-name 你的用户名
 ```
 
-### CLI Arguments
+**预览窗口功能：**
+- 📊 影响级别评估（低/中/高）
+- 📂 按操作类型分类展示
+- ✅ 清晰的操作确认
+- 🎨 颜色编码信息
+- ⚠️ 危险操作警告
+
+### 配置文件向导
+
+交互式生成配置文件：
+
+```bash
+clear-win-start --wizard --save-config 我的配置.json
+```
+
+### 命令行参数
 
 ```
 clear-win-start [-h] [--version] [--user-name USER_NAME] [--config CONFIG]
-                [--paths PATHS] [--neglect-folders FOLDERS] [--delete-keywords KEYWORDS]
-                [--dry-run] [--auto-confirm] [--no-check-shortcuts] [--verbose]
-                [--validate-only] [--log-file LOG_FILE] [--wizard] [--save-config SAVE_CONFIG]
-                [--preview]
+               [--paths PATHS] [--neglect-folders FOLDERS] [--delete-keywords KEYWORDS]
+               [--dry-run] [--auto-confirm] [--no-check-shortcuts] [--verbose]
+               [--validate-only] [--log-file LOG_FILE] [--wizard] [--save-config SAVE_CONFIG]
+               [--preview]
 ```
 
-| Argument | Description |
-|----------|-------------|
-| `--preview` | Show interactive preview window with detailed operation plan |
-| `--dry-run` | Preview changes without making them |
-| `--wizard` | Run interactive configuration wizard |
-| `--config` | Path to JSON configuration file |
-| `--user-name`, `-u` | Windows username (auto-detected if not provided) |
-| `--auto-confirm`, `-y` | Skip all confirmation prompts |
-| `--no-check-shortcuts` | Skip shortcut validation |
-| `--verbose`, `-v` | Enable verbose (debug) logging |
-| `--log-file` | Path to log file (auto-generated in AppData if not specified) |
-| `--validate-only` | Only validate configuration, don't modify |
+| 参数 | 说明 |
+|------|------|
+| `--preview` | 显示交互式预览窗口，包含详细操作计划 |
+| `--dry-run` | 预览更改，不实际执行 |
+| `--wizard` | 运行交互式配置向导 |
+| `--config` | JSON 配置文件路径 |
+| `--user-name`, `-u` | Windows 用户名（未提供时自动检测） |
+| `--auto-confirm`, `-y` | 跳过所有确认提示 |
+| `--no-check-shortcuts` | 跳过快捷方式验证 |
+| `--verbose`, `-v` | 启用详细（调试）日志 |
+| `--log-file` | 日志文件路径（未指定时自动生成到 AppData） |
+| `--validate-only` | 仅验证配置，不进行任何修改 |
 
 ---
 
-## ⚙️ Configuration
+## ⚙️ 配置
 
-### Configuration File Types
+### 配置文件类型
 
-The project uses two types of configuration files:
+项目使用两种配置文件：
 
-1. **`default-config.json`** - Default configuration file (defines global default behavior)
-2. **`config.json`** - User configuration file (customizes runtime behavior)
+1. **`default-config.json`** - 默认配置文件（定义全局默认行为）
+2. **`config.json`** - 用户配置文件（自定义运行时配置）
 
-### Default Configuration (default-config.json)
+### 默认配置文件（default-config.json）
 
-This file defines all default behaviors including:
-- Delete keywords
-- Preserved folders
-- Logging settings
-- Backup settings
-- Preview settings
+此文件定义所有默认行为，包括：
+- 删除关键词
+- 保留文件夹
+- 日志设置
+- 备份设置
+- 预览设置
 
-**Create or edit `default-config.json`:**
+**创建或编辑 `default-config.json`：**
 
 ```json
 {
     "version": "1.0.0",
-    "description": "ClearWinStart Default Configuration",
+    "description": "ClearWinStart 默认配置文件",
 
     "user_name": "",
 
@@ -175,9 +174,9 @@ This file defines all default behaviors including:
 }
 ```
 
-### User Configuration (config.json)
+### 用户配置文件（config.json）
 
-Used for runtime configuration, can fully override defaults:
+用于运行时配置，可完全覆盖默认值：
 
 ```json
 {
@@ -204,33 +203,33 @@ Used for runtime configuration, can fully override defaults:
 }
 ```
 
-### Configuration File Search Order
+### 配置文件查找顺序
 
-The program searches for configuration files in the following order:
+程序按以下顺序查找配置文件：
 
-1. `default-config.json` in current directory
-2. `default-config.json` in project root
+1. 当前目录下的 `default-config.json`
+2. 项目根目录下的 `default-config.json`
 3. `%APPDATA%\ClearWinStart\default-config.json`
-4. Use built-in defaults
+4. 使用内置默认值
 
-### Environment Variable Support
+### 环境变量支持
 
-Configuration files support environment variables:
+配置文件中支持环境变量：
 
-- `%APPDATA%` - User application data directory
-- `%USERPROFILE%` - User home directory
-- `%LOCALAPPDATA%` - Local application data directory
-- `%PROGRAMFILES%` - Program files directory
+- `%APPDATA%` - 用户应用数据目录
+- `%USERPROFILE%` - 用户主目录
+- `%LOCALAPPDATA%` - 本地应用数据目录
+- `%PROGRAMFILES%` - 程序文件目录
 
-### Default Settings
+### 默认设置
 
-**Preserved Folders:**
-- Accessibility, Accessories, Administrative Tools, Desktop.ini, Maintenance, Startup, System Tools, Windows PowerShell
+**保留的文件夹：**
+- Accessibility（轻松访问）、Accessories（附件）、Administrative Tools（管理工具）、Desktop.ini、维护、Startup（启动）、System Tools（系统工具）、Windows PowerShell
 
-**Delete Keywords:**
-- Chinese: 卸载, 官网, 更新, 帮助, 意见, 设置, 关于
-- English: install, Website, Setting, Documentation, Help
-- Other: .url
+**删除关键词：**
+- 中文：卸载、官网、更新、帮助、意见、设置、关于
+- 英文：install、Website、Setting、Documentation、Help
+- 其他：.url
 
 ---
 
@@ -238,44 +237,44 @@ Configuration files support environment variables:
 
 ```python
 from clear_win_start import StartMenuOrganizer, Configuration
-from clear_win_start.preview import PreviewWindow, create_preview_from_stats
+from clear_win_start.cli import PreviewWindow, create_preview_from_stats
 
-# Create configuration
+# 创建配置
 config = Configuration(user_name="testuser")
 
-# Create organizer
+# 创建组织器
 organizer = StartMenuOrganizer(config)
 
-# Generate preview
+# 生成预览
 stats = organizer.organize(auto_confirm=True, preview_only=True)
 preview_report = create_preview_from_stats(stats, config.paths, config.user_name)
 
-# Render preview
+# 渲染预览
 preview_output = PreviewWindow.render_preview(preview_report)
 print(preview_output)
 
-# Execute operations
+# 执行操作
 stats = organizer.organize(auto_confirm=True)
-print(f"Folders processed: {stats['folders_processed']}")
-print(f"Files moved: {stats['files_moved']}")
+print(f"处理的文件夹: {stats['folders_processed']}")
+print(f"移动的文件: {stats['files_moved']}")
 ```
 
 ---
 
-## 📁 Logging
+## 📁 日志
 
-Logs are automatically saved to:
+日志自动保存到：
 ```
 %APPDATA%\ClearWinStart\logs\clear_win_start_YYYYMMDD.log
 ```
 
-**Features:**
-- Automatic log rotation (10MB per file, 5 backups)
-- Sensitive information filtering
-- Detailed timestamp and module information
-- Separate console and file output formats
+**功能特点：**
+- 自动日志轮转（每个文件 10MB，保留 5 个备份）
+- 敏感信息过滤
+- 详细的时间戳和模块信息
+- 独立的控制台和文件输出格式
 
-### Custom Log Path
+### 自定义日志路径
 
 ```bash
 clear-win-start --verbose --log-file custom.log
@@ -283,112 +282,109 @@ clear-win-start --verbose --log-file custom.log
 
 ---
 
-## 🧪 Development
+## 🧪 开发
 
-### Setup Development Environment
+### 设置开发环境
 
 ```bash
-# Install with development dependencies
+# 安装开发依赖
 pip install -e ".[dev]"
 
-# Run tests
+# 运行测试
 pytest tests/
 
-# Run tests with coverage
+# 运行带覆盖率的测试
 pytest --cov=clear_win_start tests/
 
-# Code quality tools
+# 代码质量工具
 flake8 clear_win_start tests
 black --check clear_win_start tests
 isort --check-only clear_win_start tests
 mypy clear_win_start
 ```
 
-### Project Structure
+### 项目结构
 
 ```
 ClearWinStart/
-├── clear_win_start/          # Main package
-│   ├── __init__.py          # Package initialization
-│   ├── __main__.py          # Module entry point
-│   ├── cli.py               # CLI interface
-│   ├── core.py              # Core functionality
-│   ├── preview.py           # Preview window
-│   ├── utils.py             # Utilities & config wizard
-│   ├── exceptions.py        # Custom exceptions
-│   └── py.typed             # Type marker
-├── tests/                    # Unit tests
-├── examples/                 # Usage examples
-└── .github/                 # GitHub configuration
+├── clear_win_start/          # 主包
+│   ├── __init__.py          # 包初始化，公共 API
+│   ├── __main__.py          # 模块入口
+│   ├── cli.py               # CLI 接口（含交互式预览）
+│   ├── config.py            # 配置管理（含默认配置）
+│   ├── core.py              # 核心功能（含自定义异常）
+│   ├── logging_setup.py     # 日志系统
+│   ├── paths.py             # 路径工具
+│   └── py.typed             # 类型标记
+├── tests/                    # 单元测试
+└── .github/                 # GitHub 配置
 ```
 
 ---
 
-## 📚 Documentation
+## 📚 文档
 
-- [README.zh-CN.md](README.zh-CN.md) - 中文文档
-- Examples in `examples/` directory
-- Configuration templates in `examples/sample-config.json`
+- [README.md](README.md) - 英文文档
 
 ---
 
-## 🔧 Troubleshooting
+## 🔧 故障排除
 
-### Permission Issues
+### 权限问题
 
-Before using this tool, ensure you have write permissions for the Start Menu folders:
+使用此工具前，请确保您对开始菜单文件夹具有写权限：
 
-1. Right-click the folder → Properties → Security
-2. Click "Edit" → "Add"
-3. Enter your username
-4. Grant "Modify" permission
-5. Click "OK"
+1. 右键点击文件夹 → 属性 → 安全
+2. 点击"编辑" → "添加"
+3. 输入您的用户名
+4. 授予"修改"权限
+5. 点击"确定"
 
-Folders to check:
-- `C:\Users\<username>\AppData\Roaming\Microsoft\Windows\Start Menu\Programs`
+需要检查的文件夹：
+- `C:\Users\<用户名>\AppData\Roaming\Microsoft\Windows\Start Menu\Programs`
 - `C:\ProgramData\Microsoft\Windows\Start Menu\Programs`
 
-### Preview Window Display Issues
+### 预览窗口显示问题
 
-If emoji or box characters don't display correctly:
-- Use Windows Terminal (recommended)
-- Or run `chcp 65001` in CMD to enable UTF-8
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+如果 Emoji 或框线字符显示不正确：
+- 使用 Windows Terminal（推荐）
+- 或在 CMD 中运行 `chcp 65001` 启用 UTF-8 编码
 
 ---
 
-## 📄 License
+## 🤝 贡献
 
-This project is licensed under the MIT License.
+欢迎贡献！请随时提交 Pull Request。
 
-**Original author: © Ruan CH**
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+1. Fork 本仓库
+2. 创建您的功能分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交您的更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 打开 Pull Request
 
 ---
 
-## 🙏 Acknowledgments
+## 📄 许可证
 
-- Original author: Ruan CH
-- Contributors and issue reporters
+本项目根据 MIT 许可证授权。
+
+**原作者: © Ruan CH**
+
+特此免费授予获得本软件及相关文档文件（"软件"）副本的任何人不受限制地处理本软件的权利，包括但不限于使用、复制、修改、合并、发布、分发、再许可和/或销售软件副本的权利，并允许获得软件的人员在满足以下条件的情况下这样做：
+
+上述版权声明和本许可声明应包含在软件的所有副本或重要部分中。
+
+本软件按"原样"提供，不提供任何明示或暗示的保证，包括但不限于对适销性、特定用途适用性和非侵权性的保证。在任何情况下，作者或版权持有人均不对因软件或使用或其他与软件相关的交易而产生的任何索赔、损害或其他责任负责，无论是在合同诉讼、侵权诉讼或其他诉讼中。
+
+---
+
+## 🙏 致谢
+
+- 原作者：Ruan CH
+- 贡献者和问题报告者
 
 ---
 
 <p align="center">
-  <strong>ClearWinStart</strong> - Making Windows Start Menu Management Easy
+  <strong>ClearWinStart</strong> - 让 Windows 开始菜单管理变得简单
 </p>

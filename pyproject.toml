@@ -41,7 +41,9 @@ classifiers = [
 ]
 requires-python = ">=3.8"
 
-dependencies = []
+dependencies = [
+    "send2trash>=1.8",
+]
 
 [project.optional-dependencies]
 windows = [
@@ -49,8 +51,6 @@ windows = [
 ]
 dev = [
     "ClearWinStart[windows]",
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
     "flake8>=6.0",
     "black>=23.0",
     "isort>=5.12",
@@ -107,30 +107,4 @@ python_version = "3.8"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
-exclude = ["tests", "build", "dist"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = "-v"
-filterwarnings = [
-    "ignore::DeprecationWarning",
-]
-
-[tool.coverage.run]
-source = ["clear_win_start"]
-branch = true
-omit = ["tests/*", "*/__main__.py"]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:",
-    "if TYPE_CHECKING:",
-    "class.*\\bProtocol\\):",
-]
-exclude_dirs = ["tests", "docs"]
+exclude = ["build", "dist"]
