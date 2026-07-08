@@ -605,8 +605,8 @@ chcp 65001
 ### 项目维护
 
 - 作者：Ruan CH
-- 仓库：https://github.com/RuanCH/ClearWinStart
-- Issue：https://github.com/RuanCH/ClearWinStart/issues
+- 仓库：https://github.com/RuanCH0924/ClearWinStart
+- Issue：https://github.com/RuanCH0924/ClearWinStart/issues
 
 ### 开源协议
 
