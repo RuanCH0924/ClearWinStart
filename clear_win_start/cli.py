@@ -19,6 +19,11 @@ from clear_win_start.paths import get_default_log_path, get_windows_username
 
 logger = logging.getLogger(__name__)
 
+# 输出格式常量
+SEP_MAJOR = "=" * 54      # 一级标题分隔线
+SEP_SECTION = "─" * 54    # 二级标题分隔线
+SEP_MINOR = "·" * 54     # 内容分隔线
+
 
 def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser.
@@ -195,14 +200,14 @@ def print_stats(stats: dict) -> None:
     Args:
         stats: Statistics dictionary.
     """
-    print("\n" + "=" * 50)
-    print("操作统计")
-    print("=" * 50)
-    print(f"  已处理文件夹:     {stats.get('folders_processed', 0)}")
-    print(f"  已移动文件:       {stats.get('files_moved', 0)}")
-    print(f"  已删除文件/文件夹: {stats.get('files_deleted', 0)}")
-    print(f"  已清理无效快捷方式: {stats.get('shortcuts_cleaned', 0)}")
-    print("=" * 50)
+    print(f"\n{SEP_MAJOR}")
+    print("  操作统计")
+    print(SEP_MAJOR)
+    print(f"    已处理文件夹:           {stats.get('folders_processed', 0)}")
+    print(f"    已移动文件:             {stats.get('files_moved', 0)}")
+    print(f"    已删除文件/文件夹:       {stats.get('files_deleted', 0)}")
+    print(f"    已清理无效快捷方式:      {stats.get('shortcuts_cleaned', 0)}")
+    print(SEP_MAJOR)
 
 
 def run_wizard(args: argparse.Namespace) -> int:
@@ -229,18 +234,18 @@ def run_wizard(args: argparse.Namespace) -> int:
 
         output_path = wizard.save_config(config, save_config if save_config else None)
 
-        print(f"\n配置已保存到: {output_path}")
-        print("\n现在可以运行工具了：")
-        print(f"  clear-win-start --config {output_path}")
+        print(f"\n  ✔ 配置已保存到: {output_path}")
+        print(f"\n  ℹ️  现在可以运行工具了：")
+        print(f"       clear-win-start --config {output_path}")
 
         return 0
 
     except KeyboardInterrupt:
-        print("\n\n配置向导已取消。")
+        print("\n  ℹ️  配置向导已取消。")
         return 130
     except Exception as e:
         logger.error(f"Wizard error: {e}")
-        print(f"错误: {e}", file=sys.stderr)
+        print(f"❌ 错误: {e}", file=sys.stderr)
         return 1
 
 
@@ -267,41 +272,41 @@ def main(argv: Optional[List[str]] = None) -> int:
         config.validate()
 
         if args.validate_only:
-            print("正在验证配置和路径...")
+            print(f"\n  ─── 配置验证 ───")
+            print(f"    ▶ 正在验证配置和路径...")
             organizer = StartMenuOrganizer(config)
             errors = organizer.validate_paths()
             if errors:
-                print("\n验证发现以下错误：")
+                print(f"\n  ❌ 验证发现以下错误：")
                 for error in errors:
-                    print(f"  - {error}")
+                    print(f"      · {error}")
                 return 1
-            print("所有路径和配置均有效。")
+            print(f"  ✔ 所有路径和配置均有效。")
             return 0
 
-        print("=" * 50)
-        print("ClearWinStart")
-        print("=" * 50)
-        print(f"\n用户: {config.user_name}")
-        print("\n待处理路径：")
+        print(SEP_MAJOR)
+        print("  ClearWinStart")
+        print(SEP_MAJOR)
+        print(f"\n  ─── 配置信息 ───")
+        print(f"    用户: {config.user_name}")
+        print(f"\n    待处理路径：")
         user_profile = os.environ.get("USERPROFILE", "").lower()
         system_marker = os.path.join("programdata", "microsoft").lower()
         for path in config.paths:
             lower = path.lower()
             if system_marker in lower:
-                print(f"  [SYS]  {path}")
+                print(f"      · [SYS]  {path}")
             elif user_profile and user_profile in lower:
-                print(f"  [USER] {path}")
+                print(f"      · [USER] {path}")
             else:
-                print(f"  {path}")
-        print(f"\n干跑模式: {'是' if config.dry_run else '否'}")
-        print(f"校验快捷方式: {'是' if config.check_shortcuts else '否'}")
+                print(f"      · {path}")
+        print(f"    干跑模式: {'✔ 是' if config.dry_run else '否'}")
+        print(f"    校验快捷方式: {'✔ 是' if config.check_shortcuts else '否'}")
         
         if args.dry_run:
-            print("\n" + "⚠️  " + "=" * 46)
-            print("⚠️  干跑模式 - 不会对系统进行任何更改  ⚠️")
-            print("⚠️  " + "=" * 46 + "\n")
-        
-        print("=" * 50 + "\n")
+            print(f"\n  ╔{'═' * 50}╗")
+            print(f"  ║  ⚠️   干跑模式 - 不会对系统进行任何更改  ║")
+            print(f"  ╚{'═' * 50}╝\n")
 
         organizer = StartMenuOrganizer(config)
 
@@ -335,22 +340,22 @@ def main(argv: Optional[List[str]] = None) -> int:
             print_stats(stats)
 
         if args.dry_run:
-            print("\n本次为干跑模式。如需实际执行，请去掉 --dry-run 参数。")
+            print(f"\n  ℹ️  本次为干跑模式，如需实际执行请去掉 --dry-run 参数。")
 
         return 0
 
     except StartMenuOrganizerError as e:
         logger.error(str(e))
-        print(f"错误: {e}", file=sys.stderr)
+        print(f"❌ 错误: {e}", file=sys.stderr)
         return 1
 
     except ValueError as e:
         logger.error(str(e))
-        print(f"配置错误: {e}", file=sys.stderr)
+        print(f"❌ 配置错误: {e}", file=sys.stderr)
         return 1
 
     except KeyboardInterrupt:
-        print("\n操作已取消。")
+        print("\n  ℹ️  操作已取消。")
         return 130
 
 
@@ -536,9 +541,9 @@ class PreviewWindow:
         lines = []
 
         header = [
-            "╔══════════════════════════════════════════════════════════════════╗",
-            "║                    开始菜单整理预览                               ║",
-            "╚══════════════════════════════════════════════════════════════════╝",
+            "╔══════════════════════════════════════════════════════╗",
+            "║               开始菜单整理预览                        ║",
+            "╚══════════════════════════════════════════════════════╝",
         ]
 
         info_section = [

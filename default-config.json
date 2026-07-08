@@ -2,13 +2,16 @@
     "version": "1.0.0",
     "description": "ClearWinStart 默认配置文件 - 可被用户配置覆盖",
 
+    "_comment_user_name": "Windows 用户名，留空则在运行时自动检测",
     "user_name": "",
 
+    "_comment_paths": "要处理的开始菜单路径，支持 %APPDATA% 等环境变量",
     "paths": {
         "user_start_menu": "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs",
         "system_start_menu": "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs"
     },
 
+    "_comment_neglect_folders": "保留的文件夹列表，这些文件夹不会被扁平化处理",
     "neglect_folders": [
         "Accessibility",
         "Accessories",
@@ -23,7 +26,12 @@
         "Windows PowerShell"
     ],
 
-    "delete_keywords": [],
-    "check_shortcuts": false,
+    "_comment_delete_keywords": "文件/文件夹名包含这些关键词时会被移至回收站，留空则不删除任何文件",
+    "delete_keywords": ["卸载", "官网", "更新", "帮助", "意见", "设置", "关于"],
+
+    "_comment_check_shortcuts": "是否校验快捷方式有效性，设为 true 时无效的 .lnk 会被移至回收站",
+    "check_shortcuts": true,
+
+    "_comment_dry_run": "干跑模式，设为 true 时只预览不实际修改文件",
     "dry_run": false
 }
