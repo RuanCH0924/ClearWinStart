@@ -4,8 +4,9 @@ Core functionality for organizing Windows Start Menu.
 
 import logging
 import os
+import re
 import shutil
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import send2trash
 
@@ -423,72 +424,163 @@ class StartMenuOrganizer:
                 except OSError as e:
                     logger.error(f"  ✘ 移除失败: {item} - {e}")
 
-    def _is_valid_shortcut(self, shortcut_path: str) -> bool:
-        """检查快捷方式是否有效。
-
-        保守策略：只有明确判定目标路径是普通文件且不存在时才视为无效。
-        读取异常、路径含引号、环境变量、特殊协议等情况均视为有效，避免误删。
+    @staticmethod
+    def _read_shortcut(shortcut_path: str) -> Dict[str, Any]:
+        """读取 .lnk 文件，返回目标信息字典。
 
         Args:
-            shortcut_path: Path to the shortcut file.
+            shortcut_path: 快捷方式文件路径。
 
         Returns:
-            True if shortcut is valid, False otherwise.
+            包含 target_path / arguments / working_dir / icon_location 的字典。
+            读取失败时返回包含 error 键的字典。
         """
         try:
+            from win32com.client import Dispatch
             shell = Dispatch("WScript.Shell")
             shortcut = shell.CreateShortCut(shortcut_path)
-            target_path = shortcut.TargetPath
-            arguments = shortcut.Arguments or ""
+            return {
+                "target_path": (shortcut.TargetPath or "").strip(),
+                "arguments": (shortcut.Arguments or "").strip(),
+                "working_dir": (shortcut.WorkingDirectory or "").strip(),
+                "icon_location": (shortcut.IconLocation or "").strip(),
+            }
+        except ImportError:
+            return {"error": "pywin32 not installed"}
+        except Exception as e:
+            return {"error": str(e)}
 
-            # 没有 TargetPath — 检查是否有其他属性表明是有效的快捷方式
-            if not target_path:
-                # UWP/Store 应用也可能通过 Arguments 或 AppUserModelID 工作
-                # 但如果所有属性都为空，说明快捷方式已损坏
-                if arguments.strip():
-                    return True
-                # 也检查 IconLocation 是否指向有效路径
-                icon = shortcut.IconLocation or ""
-                if icon.strip() and not icon.startswith(","):
-                    return True
-                # 没有任何目标信息 — 无效
-                logger.debug(f"快捷方式无任何目标信息: {shortcut_path}")
-                return False
+    @staticmethod
+    def _check_shortcut_target(info: Dict[str, Any]) -> bool:
+        """验证快捷方式的目标是否有效。纯逻辑，不依赖 COM，可独立测试。
 
-            # 清理路径中的引号
-            clean_path = target_path.strip().strip('"\'')
+        验证规则（按优先级）：
+          1. 读取失败 → 无效
+          2. 无 TargetPath 且无 Arguments 和 IconLocation → 无效
+          3. 无 TargetPath 但有 Arguments 或 IconLocation → 有效（UWP/协议快捷方式）
+          4. TargetPath 是特殊协议路径 → 有效
+          5. TargetPath 包含 AppUserModelID → 有效
+          6. TargetPath 是普通文件/目录路径 → 检查是否存在
+          7. 路径不存在 → 无效
+          8. 其余情况 → 有效（保守兜底）
 
-            # 尝试多种路径变体检查目标是否存在
-            candidates = [
-                clean_path,
-                os.path.expandvars(clean_path),
-                target_path.strip(),
-                os.path.expandvars(target_path.strip()),
-            ]
-            for candidate in candidates:
-                try:
-                    if os.path.exists(candidate):
-                        return True
-                except Exception:
-                    continue
+        Args:
+            info: _read_shortcut() 返回的字典。
 
-            # 特殊协议路径（shell: / app: / ms: 等），视为有效
-            special_protocols = ("shell:", "app:", "ms:", "ms-resource:", "://")
-            if any(clean_path.lower().startswith(p) for p in special_protocols):
-                return True
-
-            # 包含通配符或 AppUserModelID（常见于 UWP 应用引用）
-            if "!" in clean_path or "*" in clean_path:
-                return True
-
-            # 目标路径明确不存在 — 无效
-            logger.debug(f"无效快捷方式: {shortcut_path} -> {clean_path} 不存在")
+        Returns:
+            True 表示快捷方式有效，False 表示无效。
+        """
+        # 规则 1：读取失败
+        if "error" in info:
+            logger.debug(f"快捷方式读取失败: {info['error']}")
             return False
 
-        except Exception as e:
-            logger.debug(f"读取快捷方式失败: {shortcut_path}: {e}")
-            # 读取失败时保守处理 — 视为有效，避免误删
+        target = info.get("target_path", "")
+        arguments = info.get("arguments", "")
+        icon = info.get("icon_location", "")
+
+        # 规则 2：完全无目标信息
+        if not target and not arguments and not icon:
+            logger.debug("快捷方式无任何目标信息")
+            return False
+
+        # 规则 3：无 TargetPath 但有其他信息
+        if not target:
             return True
+
+        # 规则 4：特殊协议路径
+        special_protocols = ("shell:", "app:", "ms:", "ms-resource:", "://")
+        if any(target.lower().startswith(p) for p in special_protocols):
+            return True
+
+        # 规则 5：AppUserModelID / 通配符
+        if "!" in target or "*" in target:
+            return True
+
+        # 规则 6+7：普通文件路径检查
+        return StartMenuOrganizer._check_file_target(target)
+
+    @staticmethod
+    def _check_file_target(target_path: str) -> bool:
+        """检查目标文件路径是否存在。处理 Windows 路径特殊问题。
+
+        Args:
+            target_path: 目标路径字符串。
+
+        Returns:
+            True 如果路径存在，False 如果路径不存在或无效。
+        """
+        # 清理路径
+        path = target_path.strip().strip('"\'')
+        if not path:
+            return False
+
+        # 尝试直接检查
+        try:
+            if os.path.exists(path):
+                return True
+        except Exception:
+            pass
+
+        # 展开环境变量后检查
+        try:
+            expanded = os.path.expandvars(path)
+            if expanded and expanded != path and os.path.exists(expanded):
+                return True
+        except Exception:
+            pass
+
+        # 尝试处理长路径（>260 字符）
+        if len(path) > 240 and not path.startswith("\\\\?\\"):
+            try:
+                long_path = "\\\\?\\" + os.path.abspath(path)
+                if os.path.exists(long_path):
+                    return True
+            except Exception:
+                pass
+
+        # 尝试规范化路径
+        try:
+            normalized = os.path.normpath(path)
+            if normalized != path and os.path.exists(normalized):
+                return True
+        except Exception:
+            pass
+
+        # 路径格式检查 — 看起来像有效路径吗？
+        # 展开环境变量后再检查格式
+        try:
+            expanded_for_check = os.path.expandvars(path)
+            if expanded_for_check != path:
+                # 环境变量展开后是标准磁盘路径 → 路径不存在
+                if re.match(r'^[a-zA-Z]:\\', expanded_for_check):
+                    return False
+                # 展开后是 UNC 路径且不存在
+                if expanded_for_check.startswith('\\\\'):
+                    return False
+                # 展开后仍是未知格式，保守处理
+                return True
+        except Exception:
+            pass
+
+        if not re.match(r'^[a-zA-Z]:\\', path) and not path.startswith('\\'):
+            # 不是磁盘路径也不是 UNC 路径，保守处理视为有效
+            return True
+
+        # 路径不存在
+        return False
+
+    def _is_valid_shortcut(self, shortcut_path: str) -> bool:
+        """检查快捷方式是否有效。整合 COM 读取与目标验证。
+
+        Args:
+            shortcut_path: 快捷方式文件路径。
+
+        Returns:
+            True 表示有效，False 表示无效。
+        """
+        info = self._read_shortcut(shortcut_path)
+        return self._check_shortcut_target(info)
 
     def validate_paths(self) -> List[str]:
         """Validate configured paths.
