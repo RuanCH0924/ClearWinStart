@@ -43,6 +43,9 @@ Windows 开始菜单的 `%APPDATA%\Microsoft\Windows\Start Menu\Programs` 目录
 | **扁平化文件夹** | 将子文件夹中的快捷方式提取到 Programs 根目录，删除空文件夹 |
 | **关键词清理** | 删除文件名中包含指定关键词（如"卸载""帮助"）的快捷方式 |
 | **无效快捷方式检测** | 读取 `.lnk` 文件的 TargetPath，验证目标文件是否存在，不存在则移入回收站 |
+| **重复快捷方式清理** | 跨所有待扫描目录比对，按 TargetPath + 启动参数（Arguments）分组，两者均相同的快捷方式只保留一个，其余移入回收站 |
+| **快捷方式备份** | 整理前将所有快捷方式（`.lnk`/`.url`）按原目录结构备份到当前用户桌面（自动识别 OneDrive 等重定向） |
+| **终端动态交互** | 全流程统一大屏：启动即进入一次全屏面板，初始化 / 配置向导 / 路径多选 / 执行 / 结果全程在同一块面板内原地刷新、不滚动；方向键菜单、颜色与宽度自适应；非交互环境自动降级为静态文本 |
 | **干跑预览模式** | 执行前生成完整的操作计划，评估影响等级，不实际修改文件 |
 | **配置文件向导** | 交互式引导生成 JSON 配置文件 |
 
@@ -113,10 +116,14 @@ pip install -e ".[dev]"        # 开发环境（含测试/代码质量工具）
 clear-win-start --help
 
 # 步骤 1：以预览模式扫描（推荐首次使用，不修改文件）
-clear-win-start --preview --user-name 你的用户名
+clear-win-start --preview
 
 # 步骤 2：确认无误后执行整理
-clear-win-start --auto-confirm --user-name 你的用户名
+clear-win-start --auto-confirm
+
+# 用户名会自动检测（USERNAME / %USERPROFILE% / getpass 依次回退）；
+# 如需覆盖，显式指定即可：
+clear-win-start --user-name 你的用户名
 
 # 使用配置文件
 clear-win-start --config config.json
@@ -148,14 +155,18 @@ clear-win-start [选项]
   --neglect-folders, -n   跳过的文件夹名称
   --delete-keywords, -d   删除关键词列表
   --dry-run               仅预览，不实际修改
-  --auto-confirm, -y      跳过所有确认提示
+  --auto-confirm, -y      跳过所有确认提示（含面板内的路径选择菜单）
   --no-check-shortcuts    跳过快捷方式有效性验证
+  --no-dedupe-shortcuts   跳过重复快捷方式清理
+  --no-backup-shortcuts   跳过执行前的快捷方式备份
+  --backup-dir            快捷方式备份目录（默认：桌面 ClearWinStart_Backup）
+  --no-animation          关闭终端动态效果（全屏面板 / 进度 / 方向键菜单）
   --verbose, -v           启用调试日志
   --validate-only         仅验证配置和路径
   --log-file              日志文件路径
   --wizard                运行配置向导
   --save-config           保存配置到文件
-  --preview               显示详细操作计划
+  --preview               展示操作计划，并在面板内确认后执行
 ```
 
 ### 典型使用流程
@@ -163,46 +174,105 @@ clear-win-start [选项]
 ```
 ┌─────────────────────────────────────────────────┐
 │  1. clear-win-start --wizard                    │
-│     运行配置向导 → 生成 config.json              │
+│     面板内完成配置向导 → 生成 config.json        │
 └─────────────────────┬───────────────────────────┘
                       ▼
 ┌─────────────────────────────────────────────────┐
-│  2. clear-win-start --preview --config config   │
-│     预览操作计划 → 确认影响范围                  │
+│  2. clear-win-start --preview --config config.json│
+│     面板内预览操作计划 → 面板菜单确认影响范围    │
 └─────────────────────┬───────────────────────────┘
                       ▼
 ┌─────────────────────────────────────────────────┐
 │  3. clear-win-start --config config.json        │
-│     实际执行整理                                │
+│     实际执行整理（同一块面板：路径多选 → 执行 → 结果）│
 └─────────────────────────────────────────────────┘
 ```
 
-### 预览模式输出示例
+### 干跑预览输出示例（`--dry-run`）
+
+在**交互式终端**中，下列内容都在同一块全屏面板内原地刷新；下面是非交互终端（重定向到文件 / CI / `--no-animation`）下的静态降级输出：
 
 ```text
-══════════════════════════════════════════════════
-  ClearWinStart
-══════════════════════════════════════════════════
 
-  ─── 配置信息 ───
-    用户: ruanc
-    待处理路径：
-      · [USER] C:\Users\ruanc\...\Start Menu\Programs
-      · [SYS]  C:\ProgramData\...\Programs
-    干跑模式: 否
-    校验快捷方式: 是
+  正在初始化 …
+  ▶ 本机用户: ruanc
+  配置信息
+    用户             ruanc
+    待处理路径       1 个
+    干跑模式         是
+    校验快捷方式     是
+    去重快捷方式     是
+    备份快捷方式     C:\Users\ruanc\OneDrive\Desktop\ClearWinStart_Backup
 
-  ─── 执行计划 ───
-    ▾ Google Chrome
-    ▾ 7-Zip
-    !  百度网盘.lnk（无效快捷方式）
-    ✗  卸载微信.lnk
+  待处理路径
+    [USER] C:\Users\ruanc\AppData\Roaming\...\Start Menu\Programs
+  正在扫描并生成计划 …
+▶ 正在处理: [USER] Microsoft\Windows\Start Menu\Programs
+  发现 1 个待处理文件夹
 
-  ─── 摘要 ───
-    待处理文件夹:          2
-    待移动文件:            5
-    快捷方式: 共 23 个, 其中 1 个无效
-    影响评估: 低
+  ℹ 执行计划
+  ────────────────────────────────────────
+  ▾ Google Chrome
+    ▸ Microsoft\Windows\Start Menu\Programs\Google Chrome\Chrome.lnk
+      → Microsoft\Windows\Start Menu\Programs\Chrome.lnk
+  ✗ 卸载微信.lnk
+
+  ────────────────────────────────────────
+  📊 摘要
+  ▾ 待处理文件夹: 1
+  ▸ 待移动文件: 1
+  ✗ 待删除文件/文件夹: 1
+  🔍 快捷方式: 共 0 个（均有效）
+  ⇋ 重复快捷方式: 0
+  ⤓ 待备份快捷方式: 2
+  ⚠ 影响评估: 低
+
+  操作计划预览
+    时间      2026-10-12 21:36:51
+    用户      ruanc
+    影响级别  低
+
+  ▾ 文件夹整理  1 项
+    ▾ Google Chrome（扁平化后移除空文件夹）
+
+  ▸ 文件移动  1 项
+    ▸ Chrome.lnk → Chrome.lnk
+
+  ✗ 关键词删除  1 项
+    ✗ 卸载微信.lnk（包含关键词: ['卸载']）
+
+  ⤓ 快捷方式备份  1 项
+    ℹ 共 2 个快捷方式将被备份
+
+  📊 总计 4 个操作
+  ⚠ 干跑模式：未对系统做任何更改。
+  如需实际执行，请去掉 --dry-run 参数。
+```
+
+> 交互式终端下，执行期日志不会滚动打印，而是收进面板的"最近操作"区域；`--dry-run` / `--preview` 会在面板内额外展示"操作计划预览"（分段列出文件夹整理 / 文件移动 / 关键词删除 / 去重 / 备份，并给出影响级别与操作总数），并按可用高度自动精简明细。
+
+`--preview` 与 `--dry-run` 类似，但会先展示计划，再用**面板内菜单**询问「确认执行 / 取消」；确认后立即在同一块面板内继续执行，全程不退出大屏。
+
+### 终端输出、颜色与动态效果
+
+- 所有表格与列表按**显示宽度**对齐，中文/全角字符按 2 列计算，不再错位；宽表会随终端宽度自动压缩、截断，避免换行错乱。
+- 颜色自动降级：非交互终端（重定向到文件、管道、CI）自动关闭；支持 `NO_COLOR`（关闭）与 `FORCE_COLOR`（强制开启）。
+- **全流程统一大屏**：从应用启动到业务结束，**只进入一次备用屏幕**，把整个终端当作一块可刷新的面板。顶部是项目名大标题，其下是步骤指示器（`初始化 › 配置 › 路径选择 › 执行 › 结果`，已完成的打 ✓、当前项高亮），所有环节都在这块面板内完成：初始化加载、配置向导问答、路径多选菜单、执行进度（阶段/进度条/统计/"最近操作"日志）、结果统计（含本次操作记录，可回看）。期间不打印滚动日志，日志通过协调机制写入面板内部；结束后退出备用屏，之前的终端内容原样恢复。
+- **不闪屏**：每个界面有最短停留时长（`min_dwell`）兜底，关键界面（配置总览、操作计划、结果统计）停留到用户按键才继续，避免处理过快导致大屏一闪而过。
+- **方向键菜单**：路径多选与预览后的执行菜单支持 ↑/↓ 移动、空格 选择 / A 全选、Enter 确认、Esc 取消；环境不支持交互时自动退化为数字输入。
+- 日志按级别着色：`⚠️` 警告、`❌` 错误，图标语义全局统一。
+
+> 动态效果仅在**交互式终端**（stdout/stderr 为 TTY）且未设置 `NO_COLOR` 时启用；管道、重定向、CI 下一律静默降级为静态文本。可用 `--no-animation` 或配置项 `animation: false` 关闭。
+
+```bash
+# 关闭颜色（例如重定向到文件时）
+NO_COLOR=1 clear-win-start --preview
+
+# 管道中强制保留颜色
+FORCE_COLOR=1 clear-win-start --dry-run | less -R
+
+# 关闭动态效果，仅保留静态输出
+clear-win-start --no-animation
 ```
 
 ---
@@ -244,6 +314,18 @@ clear-win-start [选项]
     "_comment_check_shortcuts": "是否校验快捷方式有效性",
     "check_shortcuts": true,
 
+    "_comment_dedupe_shortcuts": "是否跨所有待扫描目录清理重复快捷方式（目标路径与启动参数均相同只保留一个）",
+    "dedupe_shortcuts": true,
+
+    "_comment_backup_shortcuts": "是否在执行整理前备份所有快捷方式（.lnk/.url）",
+    "backup_shortcuts": true,
+
+    "_comment_backup_dir": "备份目录，留空则使用当前用户实际桌面下的 ClearWinStart_Backup 文件夹",
+    "backup_dir": "",
+
+    "_comment_animation": "是否启用终端动态效果（全屏面板、进度、方向键菜单），仅在交互式终端生效",
+    "animation": true,
+
     "_comment_dry_run": "干跑模式，true 时只预览不修改",
     "dry_run": false
 }
@@ -262,14 +344,20 @@ ClearWinStart/
 ├── clear_win_start/              # 主包（Python 模块）
 │   ├── __init__.py              # 包初始化，导出公共 API
 │   ├── __main__.py              # python -m clear_win_start 入口
-│   ├── cli.py                   # CLI 参数解析 + 主流程控制
+│   ├── cli.py                   # CLI 参数解析 + 归一大屏会话编排 + 预览渲染
+│   ├── ui.py                    # 统一大屏交互外壳（Screen / ScreenPrompter）
 │   ├── config.py                # 配置管理（Configuration 数据类 + DefaultConfig + ConfigurationWizard）
-│   ├── core.py                  # 核心业务逻辑（StartMenuOrganizer + 快捷方式验证）
+│   ├── console.py               # 终端渲染工具（颜色门控、宽字符对齐、表格、全屏面板、交互菜单）
+│   ├── core.py                  # 核心业务逻辑（StartMenuOrganizer + 快捷方式验证/去重/备份）
 │   ├── logging_setup.py         # 日志系统（彩色控制台 + 滚动文件）
-│   ├── paths.py                 # 路径工具（环境变量展开、路径缩短、默认路径构建）
+│   ├── paths.py                 # 路径工具（环境变量展开、路径缩短、默认路径、桌面定位）
 │   └── py.typed                 # PEP 561 类型标记
 ├── tests/                        # 单元测试
-│   └── test_shortcut_validation.py  # 快捷方式验证逻辑测试（38 个用例）
+│   ├── test_shortcut_validation.py  # 快捷方式验证逻辑测试（38 个用例）
+│   ├── test_shortcut_dedupe.py      # 重复快捷方式去重逻辑测试
+│   ├── test_shortcut_backup.py      # 快捷方式备份逻辑测试
+│   ├── test_console.py              # 终端渲染与预览报告测试
+│   └── test_ui.py                   # 统一大屏交互与全流程会话测试
 ├── default-config.json           # 默认配置文件
 ├── pyproject.toml                # 项目元数据 + 构建配置 + 工具配置
 ├── tox.ini                       # tox 自动化测试配置
@@ -282,11 +370,13 @@ ClearWinStart/
 | 文件 | 职责 | 关键类/函数 |
 |------|------|-------------|
 | `__init__.py` | 公共 API 导出 | `Configuration`, `StartMenuOrganizer`, `PreviewWindow` |
-| `cli.py` | 命令行入口、参数解析、预览渲染 | `main()`, `PreviewWindow`, `InteractiveConfirm` |
-| `config.py` | 配置模型、JSON 序列化、交互式向导 | `Configuration`, `ConfigurationWizard`, `DefaultConfig` |
+| `cli.py` | 命令行入口、会话编排、预览渲染 | `main()`, `_run_session`, `PreviewWindow`, `create_preview_from_plan` |
+| `ui.py` | 统一大屏交互外壳（全流程同一块面板 / 静态降级） | `Screen`, `ScreenPrompter` |
+| `config.py` | 配置模型、JSON 序列化、交互式向导（提示方式可注入） | `Configuration`, `ConfigurationWizard`, `Prompter`, `ConsolePrompter` |
+| `console.py` | 终端渲染（颜色/对齐/表格/全屏面板/菜单） | `style()`, `display_width()`, `table()`, `Dashboard`, `menu_select`, `ICONS` |
 | `core.py` | 核心整理逻辑、快捷方式验证 | `StartMenuOrganizer`, `_is_valid_shortcut`, `_check_shortcut_target` |
 | `paths.py` | Windows 路径处理 | `expand_env_vars()`, `shorten_start_menu_path()` |
-| `logging_setup.py` | 日志初始化 | `setup_logging()`, `ColoredFormatter` |
+| `logging_setup.py` | 日志初始化（面板感知：面板激活时日志写入面板而非滚动） | `setup_logging()`, `ColoredFormatter`, `DashboardAwareHandler` |
 
 ---
 
@@ -305,6 +395,9 @@ Configuration (数据类)
 
 ConfigurationWizard (交互式向导)
   └── run() → Configuration  逐步骤引导用户创建配置
+      └── prompter: Prompter 提示方式可注入
+          ├── ConsolePrompter   默认：逐行 print / input
+          └── ScreenPrompter    全屏面板内问答（ui.py）
 
 DefaultConfig (默认配置加载)
   ├── load_from_file()       加载 default-config.json
@@ -320,11 +413,21 @@ StartMenuOrganizer
   │       ├── _process_folder()        扁平化子文件夹
   │       │   └── _move_file()         移动文件（干跑时只打印）
   │       ├── _clean_keyword_files()   删除匹配关键词的文件
-  │       └── _clean_invalid_shortcuts() 清理无效快捷方式
-  │           └── _is_valid_shortcut() 快捷方式验证总入口
-  │               ├── _read_shortcut()           COM 读取 .lnk
-  │               └── _check_shortcut_target()   纯逻辑验证（8 条规则）
-  │                   └── _check_file_target()   Windows 路径存在性检查
+  │       ├── _clean_invalid_shortcuts() 清理无效快捷方式
+  │       │   └── _is_valid_shortcut() 快捷方式验证总入口
+  │       │       ├── _read_shortcut()           COM 读取 .lnk
+  │       │       └── _check_shortcut_target()   纯逻辑验证（8 条规则）
+  │       │           └── _check_file_target()   Windows 路径存在性检查
+  │       ├── _dedupe_across_paths()   跨所有待处理路径比对重复快捷方式
+  │       │   ├── _collect_shortcut_info()   跨路径收集 {快捷方式: 目标信息}
+  │       │   ├── _normalize_target()         规范化目标路径用于比较
+  │       │   ├── _shortcut_key()             TargetPath + Arguments 生成比较键
+  │       │   ├── _find_duplicate_shortcuts() 按比较键分组找出重复项
+  │       │   └── _dedupe_shortcuts()         执行移入回收站
+  │       └── _backup_shortcuts()     整理前备份所有快捷方式
+  │           ├── _iter_shortcut_files()     递归收集 .lnk/.url
+  │           ├── _backup_label()            生成备份子目录名
+  │           └── _get_backup_run_dir()      时间戳备份目录
   ├── _generate_dry_run_plan()  生成执行计划
   └── _print_dry_run_summary()  打印摘要
 ```
@@ -353,15 +456,19 @@ _check_shortcut_target(dict)
     └─ 规则 8：未知格式 → 有效（保守兜底）
 ```
 
-### 模块四：CLI 界面 (`cli.py`)
+### 模块四：CLI 界面 (`cli.py` + `ui.py`)
 
 ```
-main()
-  ├── --wizard           → run_wizard()
-  ├── --validate-only    → validate_paths()
-  ├── --preview          → 扫描 → render_preview() → InteractiveConfirm
-  │                        → 确认后执行 / 取消 / 重新扫描
-  └── 默认               → organize() → print_stats()
+main()                          # 构建配置 → 打开唯一的全屏面板（Screen.open）
+  └── _run_session()            # 全程复用同一块面板，只进入/退出备用屏各一次
+      ├── 步骤 0 初始化          → 校验路径 / 加载配置
+      ├── 步骤 1 配置总览        → 配置信息 + 待处理路径（停留到按键）
+      ├── 步骤 2 路径选择        → 面板内多选菜单（↑/↓ 移动、空格勾选、A 全选）
+      ├── 步骤 3 执行 / 计划     → Dashboard 原地刷新进度；--dry-run/--preview 展示计划
+      └── 步骤 4 结果            → 操作统计 + 保留本次操作记录（停留到按键后退出备用屏）
+
+  --wizard        → _run_wizard_session()（ScreenPrompter 把向导问答渲染进面板）
+  --validate-only → 初始化阶段校验，通过后在面板内展示结果
 ```
 
 ---
@@ -372,7 +479,7 @@ ClearWinStart 的核心类和方法也可作为 Python 库调用：
 
 ```python
 from clear_win_start import StartMenuOrganizer, Configuration
-from clear_win_start.cli import PreviewWindow, create_preview_from_stats
+from clear_win_start.cli import PreviewWindow, create_preview_from_plan
 
 # 创建配置
 config = Configuration(user_name="testuser")
@@ -381,8 +488,11 @@ config = Configuration(user_name="testuser")
 organizer = StartMenuOrganizer(config)
 
 # 生成预览（不修改文件）
-stats = organizer.organize(auto_confirm=True, preview_only=True)
-preview_report = create_preview_from_stats(stats, config.paths, config.user_name)
+organizer.organize(auto_confirm=True, preview_only=True)
+dry_run = organizer.get_dry_run_report()
+preview_report = create_preview_from_plan(
+    dry_run["plan"], dry_run["summary"], config.paths, config.user_name
+)
 preview_output = PreviewWindow.render_preview(preview_report)
 print(preview_output)
 
@@ -458,6 +568,10 @@ tox -e format          # 自动格式化
 | 有效路径 | 6 | 存在的 exe/目录、环境变量路径、带引号存在 |
 | 特殊快捷方式 | 8 | UWP 应用、Shell/App/MS 协议、URL、AppUserModelID、通配符 |
 | 边界场景 | 7 | 空字典、字段缺失、尾部空格、Unix 路径、CLSID、ms-resource: |
+
+重复快捷方式去重测试（`tests/test_shortcut_dedupe.py`）覆盖目标路径规范化、TargetPath + Arguments 联合分组、跨目录比对去重、参数差异不合并、空目标忽略，以及移入回收站的完整流程（通过桩替 COM 与 `send2trash` 实现，不依赖 pywin32）。
+
+快捷方式备份测试（`tests/test_shortcut_backup.py`）覆盖快捷方式递归收集、备份子目录命名、按原目录结构复制备份、复用同一时间戳目录，以及默认备份目录（桌面 `ClearWinStart_Backup`）。
 
 ---
 
@@ -597,6 +711,10 @@ chcp 65001
 **Q: 被移动的快捷方式在哪里**
 
 在开始菜单 Programs 根目录：`%APPDATA%\Microsoft\Windows\Start Menu\Programs`。原先在子文件夹中的文件已被提取到根目录。
+
+**Q: 备份文件在哪里**
+
+默认在**当前用户实际使用的桌面**（自动识别 OneDrive / 自定义重定向，而非固定 `%USERPROFILE%\Desktop`）下的 `ClearWinStart_Backup\<时间戳>\` 中，按 `User` / `System`（及原目录结构）存放整理前的快捷方式副本。可通过 `--backup-dir` 或配置文件 `backup_dir` 自定义位置，或用 `--no-backup-shortcuts` 关闭备份。
 
 ---
 

@@ -9,6 +9,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 from typing import Optional
 
+from clear_win_start import console
 from clear_win_start.paths import get_default_log_path
 
 __all__ = [
@@ -16,6 +17,7 @@ __all__ = [
     "LOG_DATE_FORMAT",
     "LOG_FORMAT_DETAILED",
     "ColoredFormatter",
+    "DashboardAwareHandler",
     "setup_logging",
     "mask_sensitive_info",
 ]
@@ -49,17 +51,47 @@ SENSITIVE_KEYWORDS = (
 
 
 class ColoredFormatter(logging.Formatter):
-    """为控制台输出着色的 Formatter。"""
+    """为控制台输出着色的 Formatter。
+
+    仅当 use_color 为 True（终端支持且未被 NO_COLOR 关闭）时才注入 ANSI 转义，
+    避免输出重定向到文件/管道时出现乱码。
+    """
+
+    def __init__(self, fmt=None, datefmt=None, use_color: bool = True) -> None:
+        super().__init__(fmt, datefmt)
+        self.use_color = use_color
 
     def format(self, record: logging.LogRecord) -> str:
         message = record.getMessage()
         if record.levelname in LEVEL_PREFIXES:
             message = LEVEL_PREFIXES[record.levelname] + message
 
+        if not self.use_color:
+            return message
+
         color = LEVEL_COLORS.get(record.levelname, "")
         if color:
             return f"{color}{message}{RESET}"
         return message
+
+
+class DashboardAwareHandler(logging.StreamHandler):
+    """在实时面板激活时，把日志写入面板内部显示（不再滚动），否则正常输出到流。
+
+    面板激活时日志由 Dashboard.log() 负责渲染，因此这里绕过 Formatter，直接把原始
+    消息交给面板，避免 ANSI 颜色与面板样式冲突。面板暂停（如等待用户输入）期间，
+    日志回退到普通流输出，保证提示仍然可见。
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        dashboard = console.get_active_dashboard()
+        if dashboard is not None and dashboard.active:
+            try:
+                dashboard.log(record.getMessage(), record.levelname)
+            except Exception:
+                self.handleError(record)
+            return
+        super().emit(record)
 
 
 def mask_sensitive_info(message: str) -> str:
@@ -90,9 +122,15 @@ def setup_logging(
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
-    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler = DashboardAwareHandler(sys.stdout)
     console_handler.setLevel(console_level)
-    console_handler.setFormatter(ColoredFormatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
+    console_handler.setFormatter(
+        ColoredFormatter(
+            LOG_FORMAT,
+            datefmt=LOG_DATE_FORMAT,
+            use_color=console.should_use_color(sys.stdout),
+        )
+    )
     root_logger.addHandler(console_handler)
 
     log_path = log_file or get_default_log_path()

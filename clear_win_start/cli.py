@@ -2,6 +2,8 @@
 Command-line interface for ClearWinStart.
 """
 
+from __future__ import annotations
+
 import argparse
 import logging
 import os
@@ -9,20 +11,31 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
-from clear_win_start import __version__
+from clear_win_start import __version__, console
+from clear_win_start.console import ICONS
 from clear_win_start.core import StartMenuOrganizer, StartMenuOrganizerError
-from clear_win_start.config import Configuration, ConfigurationWizard
+from clear_win_start.config import Configuration, ConfigurationError, ConfigurationWizard
 from clear_win_start.logging_setup import setup_logging
-from clear_win_start.paths import get_default_log_path, get_windows_username
+from clear_win_start.paths import get_default_backup_dir, get_default_log_path, get_windows_username
+from clear_win_start.ui import Screen, ScreenPrompter
 
 logger = logging.getLogger(__name__)
 
-# 输出格式常量
-SEP_MAJOR = "=" * 54      # 一级标题分隔线
-SEP_SECTION = "─" * 54    # 二级标题分隔线
-SEP_MINOR = "·" * 54     # 内容分隔线
+
+def _path_label(path: str) -> str:
+    """为开始菜单路径加上 [USER] / [SYS] / [PATH] 标签（纯文本，颜色交给 Screen）。"""
+    user_profile = os.environ.get("USERPROFILE", "").lower()
+    system_marker = os.path.join("programdata", "microsoft").lower()
+    lower = path.lower()
+    if system_marker in lower:
+        tag = "[SYS] "
+    elif user_profile and user_profile in lower:
+        tag = "[USER]"
+    else:
+        tag = "[PATH]"
+    return f"{tag} {path}"
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -113,6 +126,31 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--no-dedupe-shortcuts",
+        action="store_true",
+        help="跳过重复快捷方式清理（目标路径与启动参数均相同的快捷方式）",
+    )
+
+    parser.add_argument(
+        "--no-backup-shortcuts",
+        action="store_true",
+        help="跳过执行前的快捷方式备份",
+    )
+
+    parser.add_argument(
+        "--no-animation",
+        action="store_true",
+        help="关闭终端动态效果（全屏面板 / 进度 / 方向键菜单）",
+    )
+
+    parser.add_argument(
+        "--backup-dir",
+        type=str,
+        default=None,
+        help="快捷方式备份目录（默认：桌面的 ClearWinStart_Backup 文件夹）",
+    )
+
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -190,63 +228,281 @@ def build_config(args: argparse.Namespace) -> Configuration:
 
     config.dry_run = args.dry_run
     config.check_shortcuts = not args.no_check_shortcuts
+    config.dedupe_shortcuts = not args.no_dedupe_shortcuts
+    config.backup_shortcuts = not args.no_backup_shortcuts
+    config.animation = not args.no_animation
+
+    if args.backup_dir:
+        config.backup_dir = args.backup_dir
 
     return config
 
 
-def print_stats(stats: dict) -> None:
-    """Print operation statistics.
+def _overview_lines(screen: Screen, config: Configuration) -> List[str]:
+    """配置总览视图（面板内）。"""
+    backup_value = (
+        config.backup_dir or get_default_backup_dir()
+    ) if config.backup_shortcuts else "否"
+    rows = [
+        ("用户", config.user_name),
+        ("待处理路径", f"{len(config.paths)} 个"),
+        ("干跑模式", "是" if config.dry_run else "否"),
+        ("校验快捷方式", "是" if config.check_shortcuts else "否"),
+        ("去重快捷方式", "是" if config.dedupe_shortcuts else "否"),
+        ("备份快捷方式", backup_value),
+    ]
+    lines = [screen.line("  配置信息", "bold")]
+    for label, value in rows:
+        lines.append(screen.line(f"    {console.pad(label, 16)} {value}"))
+    lines.append("")
+    lines.append(screen.line("  待处理路径", "bold"))
+    for path in config.paths:
+        lines.append(screen.line("    " + _path_label(path), "dim"))
+    return lines
 
-    Args:
-        stats: Statistics dictionary.
-    """
-    print(f"\n{SEP_MAJOR}")
-    print("  操作统计")
-    print(SEP_MAJOR)
-    print(f"    已处理文件夹:           {stats.get('folders_processed', 0)}")
-    print(f"    已移动文件:             {stats.get('files_moved', 0)}")
-    print(f"    已删除文件/文件夹:       {stats.get('files_deleted', 0)}")
-    print(f"    已清理无效快捷方式:      {stats.get('shortcuts_cleaned', 0)}")
-    print(SEP_MAJOR)
+
+def _activity_line(screen: Screen, message: str, level: str) -> str:
+    """把一条活动日志渲染为一行（含级别图标与着色）。"""
+    if level in ("ERROR", "CRITICAL"):
+        return screen.line(f"    {ICONS['error']} {message}", "red")
+    if level == "WARNING":
+        return screen.line(f"    {ICONS['warn']} {message}", "yellow")
+    if level == "DEBUG":
+        return screen.line(f"    {message}", "dim")
+    return screen.line(f"    {ICONS['move']} {message}")
 
 
-def run_wizard(args: argparse.Namespace) -> int:
-    """Run the configuration wizard.
+def _stats_lines(screen: Screen, stats: dict,
+                 activity: Optional[List[tuple]] = None) -> List[str]:
+    """结果视图（面板内）：操作统计 + 保留本次执行的操作记录。"""
+    rows = [
+        ("已处理文件夹", stats.get("folders_processed", 0)),
+        ("已移动文件", stats.get("files_moved", 0)),
+        ("已删除文件/文件夹", stats.get("files_deleted", 0)),
+        ("已清理无效快捷方式", stats.get("shortcuts_cleaned", 0)),
+        ("已去重快捷方式", stats.get("shortcuts_deduped", 0)),
+        ("已备份快捷方式", stats.get("shortcuts_backed_up", 0)),
+    ]
+    lines = [screen.line(f"  {ICONS['stats']} 操作统计", "bold", "cyan"), ""]
+    for label, value in rows:
+        lines.append(screen.line(f"    {console.pad(label, 20)} {value}"))
 
-    Args:
-        args: Parsed command-line arguments.
+    entries = list(activity or [])
+    if entries:
+        lines.append("")
+        lines.append(
+            screen.line(f"  {ICONS['info']} 本次操作记录  {len(entries)} 条", "gray")
+        )
+        budget = max(2, console.terminal_height() - 11 - len(lines))
+        shown = entries[-budget:]
+        for message, level in shown:
+            lines.append(_activity_line(screen, message, level))
+        if len(entries) > len(shown):
+            lines.append(screen.line(f"    … 另有 {len(entries) - len(shown)} 条更早记录", "dim"))
+    return lines
 
-    Returns:
-        Exit code (0 for success, 1 for error).
-    """
-    setup_logging(verbose=args.verbose)
 
+def _plan_item_text(item: PreviewItem) -> str:
+    """把预览项渲染为一行纯文本（颜色与宽度由 Screen 统一处理）。"""
+    if item.action == ActionType.MOVE:
+        source = os.path.basename(item.source or "")
+        destination = os.path.basename(item.destination or "")
+        return f"{ICONS['move']} {source} → {destination}"
+    if item.action == ActionType.FOLDER:
+        reason = f"（{item.reason}）" if item.reason else ""
+        return f"{ICONS['folder']} {item.name}{reason}"
+    if item.action == ActionType.DELETE:
+        reason = f"（{item.reason}）" if item.reason else ""
+        return f"{ICONS['delete']} {item.name}{reason}"
+    if item.action == ActionType.VALIDATE:
+        return f"{ICONS['validate']} {item.name}"
+    return f"{ICONS['info']} {item.name}"
+
+
+def _plan_lines(screen: Screen, report: PreviewReport) -> List[str]:
+    """操作计划视图（面板内，按可用高度自动精简明细，保证信息区不被截断）。"""
+    impact_style = {"低": "green", "中": "yellow", "高": "red"}.get(
+        report.impact_level.label, "cyan"
+    )
+    lines = [
+        screen.line("  操作计划预览", "bold", "cyan"),
+        screen.line(f"    时间      {report.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"),
+        screen.line(f"    用户      {report.user_name}"),
+        screen.line(f"    影响级别  {report.impact_level.label}", impact_style),
+    ]
+    sections = [section for section in report.sections.values() if section.items]
+    if not sections:
+        lines.append("")
+        lines.append(screen.line(f"  {ICONS['warn']} 没有检测到任何操作", "dim"))
+        return lines
+
+    budget = max(8, console.terminal_height() - 11)
+    detail_budget = max(0, budget - len(lines) - 2 * len(sections) - 2)
+    per_section = max(1, detail_budget // len(sections))
+    hidden = 0
+    for section in sections:
+        lines.append("")
+        lines.append(
+            screen.line(f"  {section.icon} {section.title}  {len(section.items)} 项", "bold")
+        )
+        for item in section.items[:per_section]:
+            lines.append(screen.line("    " + _plan_item_text(item)))
+        hidden += max(0, len(section.items) - per_section)
+
+    if hidden:
+        lines.append("")
+        lines.append(screen.line(f"  … 另有 {hidden} 个明细未显示", "dim"))
+    lines.append("")
+    lines.append(
+        screen.line(f"  {ICONS['stats']} 总计 {report.total_operations} 个操作", "bold", "cyan")
+    )
+    return lines
+
+
+def _run_wizard_session(screen: Screen, args: argparse.Namespace) -> int:
+    """在全屏面板内运行配置向导。"""
+    screen.step(1)
     try:
-        wizard = ConfigurationWizard()
+        wizard = ConfigurationWizard(
+            prompter=ScreenPrompter(screen),
+            default_user_name=get_windows_username() or "",
+        )
         config = wizard.run()
-
-        save_config = args.save_config or input(
-            "\n是否保存配置文件？（回车保存到 'config.json' 或输入路径）："
-        ).strip()
-
-        if not save_config:
-            save_config = "config.json"
-
-        output_path = wizard.save_config(config, save_config if save_config else None)
-
-        print(f"\n  ✔ 配置已保存到: {output_path}")
-        print(f"\n  ℹ️  现在可以运行工具了：")
-        print(f"       clear-win-start --config {output_path}")
-
-        return 0
-
+        save_path = args.save_config or screen.text(
+            [], "是否保存配置文件？（回车保存到 config.json）", "config.json"
+        )
+        output_path = wizard.save_config(config, save_path or None)
     except KeyboardInterrupt:
-        print("\n  ℹ️  配置向导已取消。")
-        return 130
+        raise
     except Exception as e:
         logger.error(f"Wizard error: {e}")
-        print(f"❌ 错误: {e}", file=sys.stderr)
+        screen.show(
+            [screen.line(f"  {ICONS['error']} 错误: {e}", "red")],
+            footer="按任意键退出 …",
+            hold=True,
+        )
         return 1
+
+    screen.step(4)
+    screen.show(
+        [
+            screen.line(f"  {ICONS['ok']} 配置已保存到: {output_path}", "green"),
+            "",
+            screen.line("  现在可以运行工具了：", "dim"),
+            screen.line(f"      clear-win-start --config {output_path}", "cyan"),
+        ],
+        footer="按任意键退出 …",
+        hold=True,
+    )
+    return 0
+
+
+def _run_session(screen: Screen, args: argparse.Namespace, config: Configuration) -> int:
+    """在统一大屏内跑完「初始化 → 配置 → 路径选择 → 执行 → 结果」。"""
+    # ---- 步骤 0：启动初始化 ----
+    screen.step(0)
+    screen.show(
+        [
+            "",
+            screen.line("  正在初始化 …", "cyan"),
+            screen.line(f"  {ICONS['path']} 本机用户: {config.user_name}", "dim"),
+        ],
+        min_seconds=0.8,
+    )
+
+    organizer = StartMenuOrganizer(config)
+    errors = organizer.validate_paths()
+    if errors:
+        lines = [screen.line(f"  {ICONS['error']} 配置验证未通过：", "red", "bold")]
+        lines += [screen.line(f"      {ICONS['delete']} {msg}", "red") for msg in errors]
+        screen.show(lines, footer="按任意键退出 …", hold=True)
+        return 1
+    screen.log("配置校验通过")
+
+    # ---- 步骤 1：配置总览 ----
+    screen.step(1)
+    screen.show(_overview_lines(screen, config), footer="按任意键继续 …", hold=True)
+
+    if args.validate_only:
+        screen.step(4)
+        screen.show(
+            [screen.line(f"  {ICONS['ok']} 所有路径和配置均有效。", "green")],
+            footer="按任意键退出 …",
+            hold=True,
+        )
+        return 0
+
+    # ---- 步骤 2：路径选择 ----
+    screen.step(2)
+    if screen.enabled and not args.auto_confirm:
+        picked = screen.paths_select([(_path_label(path), "") for path in config.paths])
+        if not picked:
+            screen.show(
+                [screen.line(f"  {ICONS['warn']} 未选择任何路径，操作已取消。", "yellow")],
+                footer="按任意键退出 …",
+                hold=True,
+            )
+            return 0
+        config.paths = [config.paths[index] for index in picked]
+        screen.set_context(f"用户 {config.user_name} · {len(config.paths)} 个路径")
+    screen.ensure_visible(0.4)
+
+    # ---- 干跑：仅展示计划 ----
+    if config.dry_run:
+        screen.step(3)
+        screen.show([screen.line("  正在扫描并生成计划 …", "cyan")], min_seconds=0.5)
+        organizer.organize(auto_confirm=True, preview_only=True)
+        report = organizer.get_dry_run_report()
+        preview = create_preview_from_plan(
+            report["plan"], report["summary"], config.paths, config.user_name
+        )
+        screen.show(_plan_lines(screen, preview), footer="按任意键继续 …", hold=True)
+        screen.step(4)
+        screen.show(
+            [
+                screen.line(f"  {ICONS['warn']} 干跑模式：未对系统做任何更改。", "yellow"),
+                screen.line("  如需实际执行，请去掉 --dry-run 参数。", "dim"),
+            ],
+            footer="按任意键退出 …",
+            hold=True,
+        )
+        return 0
+
+    # ---- 预览：展示计划，确认后执行 ----
+    if args.preview:
+        screen.step(3)
+        screen.show([screen.line("  正在扫描并生成计划 …", "cyan")], min_seconds=0.5)
+        organizer.organize(auto_confirm=True, preview_only=True)
+        report = organizer.get_dry_run_report()
+        preview = create_preview_from_plan(
+            report["plan"], report["summary"], config.paths, config.user_name
+        )
+        screen.show(_plan_lines(screen, preview), footer="按任意键继续 …", hold=True)
+        picked = screen.menu(
+            [screen.line("  确认执行以上操作？", "bold")],
+            [("确认执行", "执行所有列出的操作"), ("取消", "放弃本次操作")],
+            single=True,
+            default_index=0,
+        )
+        if not picked or picked[0] != 0:
+            screen.show(
+                [screen.line("  操作已取消。", "yellow")], footer="按任意键退出 …", hold=True
+            )
+            return 0
+
+    # ---- 步骤 3：执行 ----
+    screen.step(3)
+    auto_confirm = True if screen.enabled else args.auto_confirm
+    stats = organizer.organize(auto_confirm=auto_confirm, dashboard=screen.dashboard)
+
+    # ---- 步骤 4：结果（统计 + 保留执行记录，停留到用户按键） ----
+    screen.step(4)
+    screen.show(
+        _stats_lines(screen, stats, screen.dashboard.activity),
+        footer="按任意键退出 …",
+        hold=True,
+    )
+    return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -261,102 +517,47 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
 
-    if args.wizard:
-        return run_wizard(args)
-
     log_file = args.log_file if args.log_file else get_default_log_path()
     setup_logging(verbose=args.verbose, log_file=log_file)
+
+    # 配置向导同样在全屏面板内完成
+    if args.wizard:
+        console.set_animation_enabled(not args.no_animation)
+        screen = Screen()
+        screen.open(context="配置向导")
+        try:
+            return _run_wizard_session(screen, args)
+        except KeyboardInterrupt:
+            screen.close()
+            print("\n  " + console.style(f"{ICONS['info']} 配置向导已取消。", "dim"))
+            return 130
+        finally:
+            screen.close()
 
     try:
         config = build_config(args)
         config.validate()
+    except (StartMenuOrganizerError, ConfigurationError, ValueError) as e:
+        logger.error(str(e))
+        print(f"{ICONS['error']} 配置错误: {e}", file=sys.stderr)
+        return 1
 
-        if args.validate_only:
-            print(f"\n  ─── 配置验证 ───")
-            print(f"    ▶ 正在验证配置和路径...")
-            organizer = StartMenuOrganizer(config)
-            errors = organizer.validate_paths()
-            if errors:
-                print(f"\n  ❌ 验证发现以下错误：")
-                for error in errors:
-                    print(f"      · {error}")
-                return 1
-            print(f"  ✔ 所有路径和配置均有效。")
-            return 0
-
-        print(SEP_MAJOR)
-        print("  ClearWinStart")
-        print(SEP_MAJOR)
-        print(f"\n  ─── 配置信息 ───")
-        print(f"    用户: {config.user_name}")
-        print(f"\n    待处理路径：")
-        user_profile = os.environ.get("USERPROFILE", "").lower()
-        system_marker = os.path.join("programdata", "microsoft").lower()
-        for path in config.paths:
-            lower = path.lower()
-            if system_marker in lower:
-                print(f"      · [SYS]  {path}")
-            elif user_profile and user_profile in lower:
-                print(f"      · [USER] {path}")
-            else:
-                print(f"      · {path}")
-        print(f"    干跑模式: {'✔ 是' if config.dry_run else '否'}")
-        print(f"    校验快捷方式: {'✔ 是' if config.check_shortcuts else '否'}")
-        
-        if args.dry_run:
-            print(f"\n  ╔{'═' * 50}╗")
-            print(f"  ║  ⚠️   干跑模式 - 不会对系统进行任何更改  ║")
-            print(f"  ╚{'═' * 50}╝\n")
-
-        organizer = StartMenuOrganizer(config)
-
-        if args.preview:
-            print(PreviewWindow.color("\n正在扫描并生成预览...\n", 'info'))
-            stats = organizer.organize(auto_confirm=True, preview_only=True)
-
-            preview_report = create_preview_from_stats(
-                stats,
-                config.paths,
-                config.user_name
-            )
-
-            preview_output = PreviewWindow.render_preview(preview_report)
-            print(preview_output)
-
-            print("\n")
-            action = InteractiveConfirm.show_execute_menu()
-
-            if action == 'cancel':
-                print(PreviewWindow.color("\n操作已取消", 'warning'))
-                return 0
-            if action == 'rescan':
-                print(PreviewWindow.color("\n正在重新扫描...\n", 'info'))
-                return main(argv)
-            print(PreviewWindow.color("\n正在执行操作...\n", 'info'))
-            stats = organizer.organize(auto_confirm=True, preview_only=False)
-            print_stats(stats)
-        else:
-            stats = organizer.organize(auto_confirm=args.auto_confirm)
-            print_stats(stats)
-
-        if args.dry_run:
-            print(f"\n  ℹ️  本次为干跑模式，如需实际执行请去掉 --dry-run 参数。")
-
-        return 0
-
+    console.set_animation_enabled(config.animation)
+    screen = Screen()
+    screen.open(context=f"用户 {config.user_name} · {len(config.paths)} 个路径")
+    try:
+        return _run_session(screen, args, config)
+    except KeyboardInterrupt:
+        screen.close()
+        print("\n  " + console.style(f"{ICONS['info']} 操作已取消。", "dim"))
+        return 130
     except StartMenuOrganizerError as e:
         logger.error(str(e))
-        print(f"❌ 错误: {e}", file=sys.stderr)
+        screen.close()
+        print(f"{ICONS['error']} 错误: {e}", file=sys.stderr)
         return 1
-
-    except ValueError as e:
-        logger.error(str(e))
-        print(f"❌ 配置错误: {e}", file=sys.stderr)
-        return 1
-
-    except KeyboardInterrupt:
-        print("\n  ℹ️  操作已取消。")
-        return 130
+    finally:
+        screen.close()
 
 
 if __name__ == "__main__":
@@ -374,6 +575,7 @@ class ActionType(Enum):
     DELETE = "delete"
     SKIP = "skip"
     VALIDATE = "validate"
+    FOLDER = "folder"
 
 
 class ImpactLevel(Enum):
@@ -434,7 +636,6 @@ class PreviewReport:
 class PreviewWindow:
     """Interactive preview window renderer."""
 
-    BOX_WIDTH = 70
     COLORS = {
         'header': '\033[95m',      # Purple
         'success': '\033[92m',     # Green
@@ -449,309 +650,212 @@ class PreviewWindow:
 
     @staticmethod
     def supports_color() -> bool:
-        """Check if terminal supports colors."""
-        if sys.platform == 'win32':
-            return os.environ.get('TERM') or True
-        return sys.stdout.isatty()
+        """是否应输出颜色（委托 console，尊重 NO_COLOR / TTY 探测）。"""
+        return console.should_use_color()
 
     @staticmethod
     def color(text: str, color_name: str) -> str:
-        """Apply color to text."""
+        """Apply color to text（未启用颜色时原样返回）。"""
         if not PreviewWindow.supports_color():
             return text
         color = PreviewWindow.COLORS.get(color_name, '')
         return f"{color}{text}{PreviewWindow.COLORS['end']}"
 
     @staticmethod
-    def center_text(text: str, width: int) -> str:
-        """Center text within specified width."""
-        return text.center(width)
-
-    @staticmethod
     def truncate(text: str, max_length: int, suffix: str = "...") -> str:
-        """Truncate text to max length."""
-        if len(text) <= max_length:
+        """按显示宽度截断文本（中文按 2 列计算）。"""
+        if console.display_width(text) <= max_length:
             return text
-        return text[:max_length - len(suffix)] + suffix
+        keep = max_length - console.display_width(suffix)
+        result = ""
+        for char in text:
+            if console.display_width(result + char) > keep:
+                break
+            result += char
+        return result + suffix
 
     @staticmethod
-    def draw_box(content: List[str], title: Optional[str] = None,
-                 border_color: str = 'info') -> str:
-        """Draw a box around content."""
-        lines = []
-        width = PreviewWindow.BOX_WIDTH
-
-        top_border = "┌" + "─" * (width - 2) + "┐"
-        bottom_border = "└" + "─" * (width - 2) + "┘"
-        side_border = "│"
-
-        lines.append(PreviewWindow.color(top_border, border_color))
-
-        if title:
-            title_line = f"│{PreviewWindow.center_text(title, width - 2)}│"
-            lines.append(PreviewWindow.color(title_line, border_color))
-            lines.append(PreviewWindow.color("├" + "─" * (width - 2) + "┤", border_color))
-
-        for line in content:
-            if isinstance(line, tuple):
-                text, color = line
-                lines.append(f"{side_border} {PreviewWindow.color(text.ljust(width - 2), color)} │")
-            else:
-                lines.append(f"{side_border} {line.ljust(width - 2)} │")
-
-        lines.append(PreviewWindow.color(bottom_border, border_color))
-        return "\n".join(lines)
-
-    @staticmethod
-    def format_preview_item(item: PreviewItem, index: int, max_len: int = 50) -> List[str]:
-        """Format a single preview item."""
-        lines = []
-
+    def format_preview_item(item: PreviewItem, index: int, max_len: int = 56) -> str:
+        """把单个预览项格式化为一行（含着色）。"""
         if item.action == ActionType.MOVE:
-            icon = "→"
-            source_name = PreviewWindow.truncate(os.path.basename(item.source or ""), max_len // 2)
-            dest_name = PreviewWindow.truncate(os.path.basename(item.destination or ""), max_len // 2)
-            line = f"  {icon} {source_name} → {dest_name}"
-            lines.append((line, 'info'))
-
-        elif item.action == ActionType.DELETE:
-            icon = "✓"
+            source_path = item.source or ""
+            parent = os.path.basename(os.path.dirname(source_path))
+            if parent:
+                source_label = os.path.join(parent, os.path.basename(source_path))
+            else:
+                source_label = source_path
+            source_name = PreviewWindow.truncate(source_label, max_len)
+            dest_name = PreviewWindow.truncate(
+                os.path.basename(item.destination or ""), max_len // 2
+            )
+            return console.style(f"    {ICONS['move']} {source_name} → {dest_name}", "cyan")
+        if item.action == ActionType.FOLDER:
             name = PreviewWindow.truncate(item.name, max_len)
-            reason = f" ({item.reason})" if item.reason else ""
-            line = f"  {icon} {name}{reason}"
-            lines.append((line, 'warning'))
-
-        elif item.action == ActionType.VALIDATE:
-            icon = "🔍"
+            reason = console.style(f"（{item.reason}）", "dim") if item.reason else ""
+            return console.style(f"    {ICONS['folder']} {name}", "yellow") + reason
+        if item.action == ActionType.DELETE:
             name = PreviewWindow.truncate(item.name, max_len)
-            line = f"  {icon} {name}"
-            lines.append((line, 'dim'))
-
-        elif item.action == ActionType.SKIP:
-            icon = "⚠"
+            reason = console.style(f"（{item.reason}）", "dim") if item.reason else ""
+            return f"    {console.style(ICONS['delete'], 'red')} {name}{reason}"
+        if item.action == ActionType.VALIDATE:
             name = PreviewWindow.truncate(item.name, max_len)
-            line = f"  {icon} {name}（将跳过）"
-            lines.append((line, 'dim'))
-
-        return lines
+            return console.style(f"    {ICONS['validate']} {name}", "dim")
+        if item.action == ActionType.SKIP:
+            name = PreviewWindow.truncate(item.name, max_len)
+            reason = console.style(f"（{item.reason}）", "dim") if item.reason else ""
+            return f"    {ICONS['info']} {name}{reason}"
+        return f"    {item.name}"
 
     @staticmethod
     def render_preview(report: PreviewReport) -> str:
-        """Render the complete preview window."""
-        lines = []
+        """渲染完整的预览面板（尺寸/对齐按显示宽度计算）。"""
+        lines: List[str] = []
+        width = 60
 
-        header = [
-            "╔══════════════════════════════════════════════════════╗",
-            "║               开始菜单整理预览                        ║",
-            "╚══════════════════════════════════════════════════════╝",
-        ]
-
-        info_section = [
-            f"  📅 时间: {report.timestamp.strftime('%Y-%m-%d %H:%M:%S')}",
-            f"  👤 用户: {report.user_name}",
-            f"  📁 路径: {PreviewWindow.truncate(', '.join(report.paths), 50)}",
-            "",
-        ]
-
-        if report.backup_id:
-            info_section.append(f"  📦 备份: {report.backup_id}")
-
-        impact_colors = {
-            '低': 'success',
-            '中': 'warning',
-            '高': 'error'
-        }
-        impact = report.impact_level.label
-        info_section.append(f"  ⚠️  影响级别: {PreviewWindow.color(impact, impact_colors.get(impact, 'info'))}")
-
-        lines.extend(header)
+        lines.append(console.style(console.rule(width, "═"), "cyan"))
+        lines.append("  " + console.style("开始菜单整理预览", "bold", "cyan"))
+        lines.append(console.style(console.rule(width, "═"), "cyan"))
         lines.append("")
-        lines.extend(info_section)
+
+        paths_text = PreviewWindow.truncate(", ".join(report.paths), 44)
+        lines.append(console.kv("时间", report.timestamp.strftime('%Y-%m-%d %H:%M:%S'), 10, 2))
+        lines.append(console.kv("用户", report.user_name, 10, 2))
+        lines.append(console.kv("路径", paths_text, 10, 2))
+        if report.backup_id:
+            lines.append(console.kv("备份", report.backup_id, 10, 2))
+
+        impact_style = {"低": "green", "中": "yellow", "高": "red"}.get(
+            report.impact_level.label, "cyan"
+        )
+        lines.append(
+            console.kv(
+                "影响级别",
+                console.style(report.impact_level.label, impact_style, "bold"),
+                10,
+                2,
+            )
+        )
 
         if not report.sections:
             lines.append("")
-            lines.append(PreviewWindow.color("  ⚠️  没有检测到任何操作", 'dim'))
+            lines.append("  " + console.style(f"{ICONS['warn']} 没有检测到任何操作", "dim"))
             return "\n".join(lines)
 
-        for section_name, section in report.sections.items():
+        for section in report.sections.values():
             if not section.items:
                 continue
-
             lines.append("")
-            lines.append(f"  {section.icon} {section.title} ({len(section.items)} 项)")
-
-            for idx, item in enumerate(section.items[:20], 1):
-                item_lines = PreviewWindow.format_preview_item(item, idx)
-                for line in item_lines:
-                    if isinstance(line, tuple):
-                        lines.append(line[0])
-                    else:
-                        lines.append(line)
-
+            lines.append(
+                "  "
+                + console.style(f"{section.icon} {section.title}", "bold")
+                + console.style(f"  {len(section.items)} 项", "dim")
+            )
+            for index, item in enumerate(section.items[:20], 1):
+                lines.append(PreviewWindow.format_preview_item(item, index))
             if len(section.items) > 20:
-                lines.append(f"  ... 还有 {len(section.items) - 20} 项未显示")
+                lines.append(
+                    console.style(f"    ... 还有 {len(section.items) - 20} 项未显示", "dim")
+                )
 
         lines.append("")
-        lines.append("  " + "─" * 66)
-        lines.append(f"  📊 总计: {report.total_operations} 个操作")
-        lines.append("  " + "─" * 66)
-
+        lines.append(console.style(console.rule(width), "gray"))
+        lines.append(
+            "  "
+            + console.style(f"{ICONS['stats']} 总计 ", "bold")
+            + console.style(f"{report.total_operations} 个操作", "bold", "cyan")
+        )
+        lines.append(console.style(console.rule(width), "gray"))
         return "\n".join(lines)
 
 
-class InteractiveConfirm:
-    """Interactive confirmation interface."""
+def create_preview_from_plan(plan: List[dict], summary: dict, paths: List[str],
+                             user_name: str) -> PreviewReport:
+    """由 dry-run 的计划与摘要构建预览报告（含真实条目明细）。
 
-    @staticmethod
-    def confirm(message: str, default: Optional[bool] = None) -> bool:
-        """Ask for user confirmation."""
-        if default is None:
-            prompt = f"{message} [y/n]: "
-        elif default:
-            prompt = f"{message} [Y/n]: "
-        else:
-            prompt = f"{message} [y/N]: "
+    Args:
+        plan: StartMenuOrganizer.get_dry_run_report() 的 plan 部分。
+        summary: 同一报告的 summary 部分。
+        paths: 待处理路径列表。
+        user_name: 用户名。
 
-        while True:
-            try:
-                response = input(PreviewWindow.color(prompt, 'info')).strip().lower()
-                if not response:
-                    if default is not None:
-                        return default
-                elif response in ['y', 'yes', '是', '确认']:
-                    return True
-                elif response in ['n', 'no', '否', '取消']:
-                    return False
-                else:
-                    print(PreviewWindow.color("  请输入 y 或 n", 'warning'))
-            except (KeyboardInterrupt, EOFError):
-                print()
-                return False
-
-    @staticmethod
-    def show_menu(options: List[Dict[str, Any]]) -> Optional[int]:
-        """Show interactive menu and return selected option index."""
-        if not options:
-            return None
-
-        print()
-        for idx, option in enumerate(options, 1):
-            key = option.get('key', str(idx))
-            label = option.get('label', '')
-            description = option.get('description', '')
-            default = option.get('default', False)
-
-            default_marker = " ★" if default else ""
-            print(f"  [{key}] {label}{default_marker}")
-            if description:
-                print(f"      {PreviewWindow.color(description, 'dim')}")
-
-        print()
-        while True:
-            try:
-                response = input(PreviewWindow.color("  请选择 [1]: ", 'info')).strip()
-                if not response:
-                    for idx, option in enumerate(options):
-                        if option.get('default', False):
-                            return idx
-                    return 0 if options else None
-                elif response.isdigit():
-                    idx = int(response) - 1
-                    if 0 <= idx < len(options):
-                        return idx
-                else:
-                    for idx, option in enumerate(options):
-                        if option.get('key') == response:
-                            return idx
-                print(PreviewWindow.color(f"  请输入 1-{len(options)} 之间的数字", 'warning'))
-            except (KeyboardInterrupt, EOFError):
-                print()
-                return None
-
-    @staticmethod
-    def show_execute_menu() -> str:
-        """Show execution options menu."""
-        options = [
-            {'key': '1', 'label': '确认执行', 'description': '执行所有列出的操作', 'default': True},
-            {'key': '2', 'label': '重新扫描', 'description': '重新扫描并生成新的预览'},
-            {'key': '3', 'label': '取消', 'description': '取消操作，返回命令行'},
-        ]
-
-        idx = InteractiveConfirm.show_menu(options)
-        if idx is None:
-            return 'cancel'
-
-        actions = ['execute', 'rescan', 'cancel']
-        return actions[idx]
-
-
-def create_preview_from_stats(stats: dict, paths: List[str],
-                              user_name: str) -> PreviewReport:
-    """Create a preview report from operation statistics."""
+    Returns:
+        填充好的 PreviewReport。
+    """
     report = PreviewReport(
         timestamp=datetime.now(),
         paths=paths,
-        user_name=user_name
+        user_name=user_name,
     )
 
-    folders_processed = stats.get('folders_processed', 0)
-    if folders_processed > 0:
-        report.add_item(
-            "📂 文件夹处理",
-            "📂",
-            PreviewItem(
-                action=ActionType.SKIP,
-                name=f"将处理 {folders_processed} 个文件夹",
-                reason="扁平化嵌套结构"
-            ),
-            "📂 文件夹整理"
-        )
+    for entry in plan:
+        for folder in entry.get("folders_to_process", []):
+            report.add_item(
+                "folders",
+                ICONS["folder"],
+                PreviewItem(action=ActionType.FOLDER, name=folder, reason="扁平化后移除空文件夹"),
+                "文件夹整理",
+            )
+        for move in entry.get("files_to_move", []):
+            report.add_item(
+                "moves",
+                ICONS["move"],
+                PreviewItem(
+                    action=ActionType.MOVE,
+                    name=os.path.basename(move.get("source", "")),
+                    source=move.get("source"),
+                    destination=move.get("destination"),
+                ),
+                "文件移动",
+            )
+        for item in entry.get("files_to_delete", []):
+            report.add_item(
+                "deletes",
+                ICONS["delete"],
+                PreviewItem(
+                    action=ActionType.DELETE,
+                    name=os.path.basename(item.get("path", "")),
+                    reason=item.get("reason", ""),
+                ),
+                "关键词删除",
+            )
+        for duplicate in entry.get("shortcuts_to_dedupe", []):
+            report.add_item(
+                "dedupe",
+                ICONS["dedupe"],
+                PreviewItem(
+                    action=ActionType.DELETE,
+                    name=os.path.basename(duplicate),
+                    reason="目标路径与启动参数相同",
+                ),
+                "快捷方式去重",
+            )
 
-    files_moved = stats.get('files_moved', 0)
-    if files_moved > 0:
+    invalid = summary.get("total_shortcuts_invalid", 0)
+    if invalid > 0:
         report.add_item(
-            "📦 文件移动",
-            "📦",
-            PreviewItem(
-                action=ActionType.MOVE,
-                name=f"将移动 {files_moved} 个文件",
-                reason="扁平化到根目录"
-            ),
-            "📦 文件移动"
-        )
-
-    files_deleted = stats.get('files_deleted', 0)
-    if files_deleted > 0:
-        report.add_item(
-            "🗑️ 删除操作",
-            "🗑️",
-            PreviewItem(
-                action=ActionType.DELETE,
-                name=f"将删除 {files_deleted} 个文件/文件夹",
-                reason="匹配关键词"
-            ),
-            "🗑️ 删除文件"
-        )
-
-    shortcuts_cleaned = stats.get('shortcuts_cleaned', 0)
-    if shortcuts_cleaned > 0:
-        report.add_item(
-            "🔍 快捷方式验证",
-            "🔍",
+            "invalid",
+            ICONS["validate"],
             PreviewItem(
                 action=ActionType.VALIDATE,
-                name=f"将验证 {shortcuts_cleaned} 个快捷方式",
-                reason="清理无效快捷方式"
+                name=f"共 {invalid} 个将移入回收站",
+                reason="目标不存在",
             ),
-            "🔍 快捷方式"
+            "无效快捷方式",
         )
 
-    total_ops = files_moved + files_deleted + shortcuts_cleaned
-    if total_ops > 50:
-        report.impact_level = ImpactLevel.HIGH
-    elif total_ops > 20:
-        report.impact_level = ImpactLevel.MEDIUM
-    else:
-        report.impact_level = ImpactLevel.LOW
+    backup = summary.get("total_shortcuts_to_backup", 0)
+    if backup > 0:
+        report.add_item(
+            "backup",
+            ICONS["backup"],
+            PreviewItem(
+                action=ActionType.SKIP,
+                name=f"共 {backup} 个快捷方式将被备份",
+                reason="保存到备份目录",
+            ),
+            "快捷方式备份",
+        )
 
+    impact_map = {"低": ImpactLevel.LOW, "中": ImpactLevel.MEDIUM, "高": ImpactLevel.HIGH}
+    report.impact_level = impact_map.get(summary.get("estimated_impact", "低"), ImpactLevel.LOW)
     return report

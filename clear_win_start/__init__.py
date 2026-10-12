@@ -13,7 +13,7 @@ from clear_win_start.core import StartMenuOrganizer
 from clear_win_start.paths import expand_env_vars
 from clear_win_start.cli import (
     PreviewWindow,
-    create_preview_from_stats,
+    create_preview_from_plan,
 )
 
 __all__ = [
@@ -21,7 +21,7 @@ __all__ = [
     "ConfigurationWizard",
     "PreviewWindow",
     "StartMenuOrganizer",
-    "create_preview_from_stats",
+    "create_preview_from_plan",
     "expand_env_vars",
     "__version__",
 ]

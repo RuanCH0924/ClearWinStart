@@ -6,11 +6,11 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Protocol
 
 from clear_win_start.paths import build_default_paths, expand_env_vars
 
-__all__ = ["Configuration", "ConfigurationWizard", "confirm_action"]
+__all__ = ["Configuration", "ConfigurationWizard", "ConsolePrompter", "confirm_action"]
 
 
 logger = logging.getLogger(__name__)
@@ -114,6 +114,10 @@ class Configuration:
     neglect_folders: List[str] = field(default_factory=list)
     delete_keywords: List[str] = field(default_factory=list)
     check_shortcuts: bool = False
+    dedupe_shortcuts: bool = False
+    backup_shortcuts: bool = False
+    backup_dir: str = ""
+    animation: bool = False
     dry_run: bool = False
 
     def __post_init__(self) -> None:
@@ -128,6 +132,8 @@ class Configuration:
             self.neglect_folders = DefaultConfig.NEGLECT_FOLDERS.copy()
         if not self.delete_keywords:
             self.delete_keywords = DefaultConfig.DELETE_KEYWORDS.copy()
+        if self.backup_dir:
+            self.backup_dir = expand_env_vars(self.backup_dir)
 
     @classmethod
     def from_file(cls, config_path: str) -> "Configuration":
@@ -152,6 +158,10 @@ class Configuration:
             neglect_folders=data.get("neglect_folders", []),
             delete_keywords=_normalize_keywords(data.get("delete_keywords", [])),
             check_shortcuts=data.get("check_shortcuts", False),
+            dedupe_shortcuts=data.get("dedupe_shortcuts", False),
+            backup_shortcuts=data.get("backup_shortcuts", False),
+            backup_dir=data.get("backup_dir", ""),
+            animation=data.get("animation", False),
             dry_run=data.get("dry_run", False),
         )
 
@@ -163,6 +173,10 @@ class Configuration:
             "neglect_folders": self.neglect_folders,
             "delete_keywords": self.delete_keywords,
             "check_shortcuts": self.check_shortcuts,
+            "dedupe_shortcuts": self.dedupe_shortcuts,
+            "backup_shortcuts": self.backup_shortcuts,
+            "backup_dir": self.backup_dir,
+            "animation": self.animation,
             "dry_run": self.dry_run,
         }
         if include_metadata:
@@ -224,8 +238,75 @@ def confirm_action(message: str) -> bool:
 # ----------------------------------------------------------------------
 
 
+class Prompter(Protocol):
+    """向导提示接口：可注入 ``ConsolePrompter``（终端）或全屏面板实现。"""
+
+    def header(self, title: str) -> None:
+        ...
+
+    def section(self, title: str) -> None:
+        ...
+
+    def note(self, text: str) -> None:
+        ...
+
+    def text(self, prompt: str, default: Optional[str] = None, required: bool = False) -> str:
+        ...
+
+    def yes_no(self, prompt: str, default: bool = False) -> bool:
+        ...
+
+    def list_input(self, prompt: str, allow_empty: bool = True) -> List[str]:
+        ...
+
+
+class ConsolePrompter:
+    """默认的终端提示实现（逐行 print / input），保持向导既有行为。"""
+
+    def header(self, title: str) -> None:
+        print("\n" + "=" * 60)
+        print(f"  {title}")
+        print("=" * 60)
+
+    def section(self, title: str) -> None:
+        print(f"\n--- {title} ---")
+
+    def note(self, text: str) -> None:
+        print(text)
+
+    def text(self, prompt: str, default: Optional[str] = None, required: bool = False) -> str:
+        if default:
+            response = input(f"{prompt} [{default}]: ").strip()
+            return response if response else default
+        response = input(f"{prompt}: ").strip()
+        if required and not response:
+            print("This field is required. Please try again.")
+            return self.text(prompt, default, required)
+        return response
+
+    def yes_no(self, prompt: str, default: bool = False) -> bool:
+        default_str = "Y/n" if default else "y/N"
+        response = input(f"{prompt} ({default_str}): ").strip().lower()
+        if not response:
+            return default
+        return response in ("y", "yes")
+
+    def list_input(self, prompt: str, allow_empty: bool = True) -> List[str]:
+        print(f"{prompt} (Enter empty line to finish)")
+        items: List[str] = []
+        while True:
+            item = input("  - ").strip()
+            if not item:
+                break
+            items.append(item)
+        if not items and not allow_empty:
+            print("At least one item is required. Please try again.")
+            return self.list_input(prompt, allow_empty)
+        return items
+
+
 class ConfigurationWizard:
-    """交互式配置生成向导（CLI 终端使用）。"""
+    """交互式配置生成向导（提示方式可通过 prompter 注入，以适配全屏面板）。"""
 
     DEFAULT_NEGLECT_FOLDERS: List[str] = [
         "Accessibility", "Accessories", "Administrative", "Tools",
@@ -239,136 +320,141 @@ class ConfigurationWizard:
         "install", "Website", "Setting", "Documentation", "Help", ".url",
     ]
 
-    # ---- 终端打印辅助 ----
-    @staticmethod
-    def print_header(title: str) -> None:
-        print("\n" + "=" * 60)
-        print(f"  {title}")
-        print("=" * 60)
+    def __init__(self, prompter: Optional[Prompter] = None,
+                 default_user_name: str = "") -> None:
+        self.prompter: Prompter = prompter or ConsolePrompter()
+        self.default_user_name = default_user_name
 
-    @staticmethod
-    def print_section(title: str) -> None:
-        print(f"\n--- {title} ---")
+    # ---- 兼容旧的静态辅助接口（转发给 prompter） ----
+    def print_header(self, title: str) -> None:
+        self.prompter.header(title)
 
-    @staticmethod
-    def get_input(prompt: str, default: Optional[str] = None, required: bool = False) -> str:
-        if default:
-            response = input(f"{prompt} [{default}]: ").strip()
-            return response if response else default
-        response = input(f"{prompt}: ").strip()
-        if required and not response:
-            print("This field is required. Please try again.")
-            return ConfigurationWizard.get_input(prompt, default, required)
-        return response
+    def print_section(self, title: str) -> None:
+        self.prompter.section(title)
 
-    @staticmethod
-    def get_yes_no(prompt: str, default: bool = False) -> bool:
-        default_str = "Y/n" if default else "y/N"
-        response = input(f"{prompt} ({default_str}): ").strip().lower()
-        if not response:
-            return default
-        return response in ("y", "yes")
+    def get_input(self, prompt: str, default: Optional[str] = None, required: bool = False) -> str:
+        return self.prompter.text(prompt, default, required)
 
-    @staticmethod
-    def get_list_input(prompt: str, allow_empty: bool = True) -> List[str]:
-        print(f"{prompt} (Enter empty line to finish)")
-        items: List[str] = []
-        while True:
-            item = input("  - ").strip()
-            if not item:
-                break
-            items.append(item)
-        if not items and not allow_empty:
-            print("At least one item is required. Please try again.")
-            return ConfigurationWizard.get_list_input(prompt, allow_empty)
-        return items
+    def get_yes_no(self, prompt: str, default: bool = False) -> bool:
+        return self.prompter.yes_no(prompt, default)
+
+    def get_list_input(self, prompt: str, allow_empty: bool = True) -> List[str]:
+        return self.prompter.list_input(prompt, allow_empty)
 
     # ---- 入口 ----
     def run(self) -> Configuration:
-        self.print_header("ClearWinStart Configuration Wizard")
+        prompter = self.prompter
+        prompter.header("ClearWinStart Configuration Wizard")
 
-        print(
+        prompter.note(
             "\nThis wizard will help you create a configuration file for organizing\n"
             "your Windows Start Menu. You can always edit the config.json file later.\n"
             "\nPress Enter to accept default values shown in brackets.\n"
         )
 
-        self.print_section("Step 1: Basic Information")
-        user_name = self.get_input("Enter your Windows username", required=True)
+        prompter.section("Step 1: Basic Information")
+        user_name = prompter.text(
+            "Windows username（已自动检测，回车采用）",
+            default=self.default_user_name or None,
+            required=True,
+        )
         config = Configuration(user_name=user_name)
 
-        self.print_section("Step 2: Paths to Process")
-        print(
+        prompter.section("Step 2: Paths to Process")
+        prompter.note(
             "\nThe following paths will be processed:\n"
             "  1. User Start Menu: %APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\n"
             "  2. System Start Menu: C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\n"
             "\nYou can add additional paths or modify these later.\n"
         )
-        if not self.get_yes_no("Use default Start Menu paths", default=True):
-            print("\nEnter additional paths to process:")
-            config.paths = self.get_list_input("Enter paths (one per line)", allow_empty=False)
+        if not prompter.yes_no("Use default Start Menu paths", default=True):
+            prompter.note("\nEnter additional paths to process:")
+            config.paths = prompter.list_input("Enter paths (one per line)", allow_empty=False)
 
-        self.print_section("Step 3: Folders to Preserve")
-        print(
+        prompter.section("Step 3: Folders to Preserve")
+        prompter.note(
             "\nThese folders will NOT be processed (they contain important system shortcuts):\n"
             "  - Accessories, Administrative Tools, Startup, System Tools, etc.\n"
             "\nYou can customize this list to add or remove folders.\n"
         )
-        if self.get_yes_no("Show default preserved folders", default=False):
-            print("\nDefault folders:")
-            for folder in self.DEFAULT_NEGLECT_FOLDERS:
-                print(f"  - {folder}")
-        if self.get_yes_no("Customize preserved folders", default=False):
-            print("\nEnter folder names to preserve (one per line):")
-            config.neglect_folders = self.get_list_input("Enter folder names", allow_empty=True)
+        if prompter.yes_no("Show default preserved folders", default=False):
+            listing = "\nDefault folders:\n" + "\n".join(
+                f"  - {folder}" for folder in self.DEFAULT_NEGLECT_FOLDERS
+            )
+            prompter.note(listing)
+        if prompter.yes_no("Customize preserved folders", default=False):
+            prompter.note("\nEnter folder names to preserve (one per line):")
+            config.neglect_folders = prompter.list_input("Enter folder names", allow_empty=True)
         else:
             config.neglect_folders = self.DEFAULT_NEGLECT_FOLDERS.copy()
 
-        self.print_section("Step 4: Keywords to Delete")
-        print(
+        prompter.section("Step 4: Keywords to Delete")
+        prompter.note(
             "\nFiles and folders containing these keywords will be automatically deleted:\n"
             "  - Chinese: 卸载, 官网, 更新, 帮助, 意见, 设置, 关于\n"
             "  - English: install, Website, Setting, Documentation, Help\n"
             "  - Other: .url (URL shortcuts)\n"
         )
-        if self.get_yes_no("Show default delete keywords", default=False):
-            print("\nDefault keywords:")
-            for keyword in self.DEFAULT_DELETE_KEYWORDS:
-                print(f"  - {keyword}")
-        if self.get_yes_no("Customize delete keywords", default=False):
-            print("\nEnter keywords to match for deletion (one per line):")
-            config.delete_keywords = self.get_list_input("Enter keywords", allow_empty=True)
+        if prompter.yes_no("Show default delete keywords", default=False):
+            listing = "\nDefault keywords:\n" + "\n".join(
+                f"  - {keyword}" for keyword in self.DEFAULT_DELETE_KEYWORDS
+            )
+            prompter.note(listing)
+        if prompter.yes_no("Customize delete keywords", default=False):
+            prompter.note("\nEnter keywords to match for deletion (one per line):")
+            config.delete_keywords = prompter.list_input("Enter keywords", allow_empty=True)
         else:
             config.delete_keywords = self.DEFAULT_DELETE_KEYWORDS.copy()
 
-        self.print_section("Step 5: Shortcut Validation")
-        print(
+        prompter.section("Step 5: Shortcut Validation")
+        prompter.note(
             "\nWhen enabled, the tool will check if shortcuts point to existing files\n"
             "and remove invalid (broken) shortcuts.\n"
         )
-        config.check_shortcuts = self.get_yes_no("Check and remove invalid shortcuts", default=True)
+        config.check_shortcuts = prompter.yes_no("Check and remove invalid shortcuts", default=True)
+        prompter.note(
+            "\nWhen enabled, the tool will also remove duplicate shortcuts that point\n"
+            "to the same target path, keeping only one of each.\n"
+        )
+        config.dedupe_shortcuts = prompter.yes_no("Remove duplicate shortcuts", default=True)
 
-        self.print_section("Step 6: Dry Run Mode")
-        print(
+        prompter.note(
+            "\nWhen enabled, all shortcuts are copied to a backup folder on your\n"
+            "Desktop before any changes are made.\n"
+        )
+        config.backup_shortcuts = prompter.yes_no(
+            "Back up all shortcuts before cleanup", default=True
+        )
+        if config.backup_shortcuts:
+            config.backup_dir = prompter.text(
+                "Backup directory (blank = Desktop\\ClearWinStart_Backup)", default=""
+            )
+
+        prompter.section("Step 6: Dry Run Mode")
+        prompter.note(
             "\nDry Run mode allows you to preview changes without actually making them.\n"
             "This is recommended for first-time users.\n"
         )
-        config.dry_run = self.get_yes_no("Enable Dry Run mode by default", default=True)
+        config.dry_run = prompter.yes_no("Enable Dry Run mode by default", default=True)
 
-        self.print_header("Configuration Complete!")
-        print(
+        prompter.header("Configuration Complete!")
+        prompter.note(
             f"\nSummary:\n"
             f"  Username: {config.user_name}\n"
             f"  Paths: {len(config.paths)} path(s)\n"
             f"  Preserved folders: {len(config.neglect_folders)} folder(s)\n"
             f"  Delete keywords: {len(config.delete_keywords)} keyword(s)\n"
             f"  Check shortcuts: {config.check_shortcuts}\n"
+            f"  Dedupe shortcuts: {config.dedupe_shortcuts}\n"
+            f"  Back up shortcuts: {config.backup_shortcuts}\n"
             f"  Dry run mode: {config.dry_run}\n"
         )
         return config
 
     def save_config(self, config: Configuration, output_path: Optional[str] = None) -> str:
         if output_path is None:
-            output_path = self.get_input("Enter output path for config file", default="config.json")
+            output_path = self.prompter.text(
+                "Enter output path for config file", default="config.json"
+            )
         config.to_file(output_path)
         return output_path

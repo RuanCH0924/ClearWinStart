@@ -32,6 +32,18 @@
     "_comment_check_shortcuts": "是否校验快捷方式有效性，设为 true 时无效的 .lnk 会被移至回收站",
     "check_shortcuts": true,
 
+    "_comment_dedupe_shortcuts": "是否跨所有待扫描目录清理重复快捷方式（目标路径与启动参数均相同只保留一个），重复项会被移至回收站",
+    "dedupe_shortcuts": true,
+
+    "_comment_backup_shortcuts": "是否在执行整理前备份所有快捷方式（.lnk/.url）",
+    "backup_shortcuts": true,
+
+    "_comment_backup_dir": "备份目录，留空则使用当前用户实际桌面（自动识别 OneDrive 等重定向）下的 ClearWinStart_Backup 文件夹，支持环境变量",
+    "backup_dir": "",
+
+    "_comment_animation": "是否启用终端动态效果（全屏面板、进度、方向键菜单），仅在交互式终端生效",
+    "animation": true,
+
     "_comment_dry_run": "干跑模式，设为 true 时只预览不实际修改文件",
     "dry_run": false
 }
