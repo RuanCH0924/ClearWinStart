@@ -9,8 +9,6 @@ import shutil
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
-import send2trash
-
 from clear_win_start.config import Configuration
 from clear_win_start.console import ICONS, Dashboard
 from clear_win_start.paths import get_default_backup_dir, shorten_start_menu_path
@@ -25,8 +23,12 @@ class StartMenuOrganizerError(Exception):
         super().__init__(self.message)
 
 
-class PermissionError(StartMenuOrganizerError):
-    """Raised when permission is denied to access a file or directory."""
+class AccessDeniedError(StartMenuOrganizerError):
+    """Raised when permission is denied to access a file or directory.
+
+    刻意不叫 PermissionError：那会遮蔽内置异常，令真实的 OSError/EACCES 无法与
+    本工具主动抛出的"路径不可写"错误相区分。
+    """
     def __init__(self, path: str) -> None:
         self.path = path
         message = f"Permission denied: Unable to access '{path}'. Please check folder permissions."
@@ -49,16 +51,35 @@ class ShortcutParseError(StartMenuOrganizerError):
         super().__init__(message)
 
 
+def _send_to_trash(path: str) -> None:
+    """把路径移入回收站。
+
+    延迟导入 send2trash：缺失该依赖时只在实际执行删除时给出明确报错，
+    而 `import clear_win_start`、`--help`、`--validate-only` 等不依赖它的路径仍可用。
+    """
+    try:
+        import send2trash
+    except ImportError as exc:  # pragma: no cover - 仅在依赖缺失时触发
+        raise StartMenuOrganizerError(
+            "缺少依赖 send2trash，无法移入回收站；请先执行 pip install send2trash"
+        ) from exc
+    send2trash.send2trash(path)
+
+
 class StartMenuOrganizer:
     """Main class for organizing Windows Start Menu."""
 
-    # 被视为「快捷方式」的文件扩展名
+    # 被视为「快捷方式」的文件扩展名（备份范围）
     SHORTCUT_EXTENSIONS: tuple = (".lnk", ".url")
+    # 可由 COM(WScript.Shell) 读取、因而参与校验/去重的扩展名。
+    # .url 是 INI 文本而非 Shell Link，故只参与备份，不参与校验与去重。
+    COM_SHORTCUT_EXTENSIONS: tuple = (".lnk",)
 
     EMPTY_STATS: dict = {
         "folders_processed": 0,
         "files_moved": 0,
         "files_deleted": 0,
+        "files_overwritten": 0,
         "shortcuts_cleaned": 0,
         "shortcuts_deduped": 0,
         "shortcuts_backed_up": 0,
@@ -67,8 +88,10 @@ class StartMenuOrganizer:
         "total_folders": 0,
         "total_files_to_move": 0,
         "total_files_to_delete": 0,
+        "total_files_overwritten": 0,
         "total_shortcuts_to_clean": 0,
         "total_shortcuts_invalid": 0,
+        "total_shortcuts_unreadable": 0,
         "total_shortcuts_duplicate": 0,
         "total_shortcuts_to_backup": 0,
         "estimated_impact": "Low",
@@ -121,8 +144,10 @@ class StartMenuOrganizer:
                     self._process_path(path, auto_confirm, preview_only, index, total_paths)
                 except PathNotFoundError:
                     logger.warning(f"路径不存在: {path}")
-                except PermissionError as e:
+                except AccessDeniedError as e:
                     logger.error(str(e))
+                except OSError as e:
+                    logger.error(f"访问失败: {path} - {e}")
 
             # 重复快捷方式需在所有待处理路径之间比对，故放在路径处理之后
             if self.config.dedupe_shortcuts:
@@ -196,13 +221,13 @@ class StartMenuOrganizer:
 
         Raises:
             PathNotFoundError: If path does not exist.
-            PermissionError: If permission is denied.
+            AccessDeniedError: If permission is denied.
         """
         if not os.path.exists(path):
             raise PathNotFoundError(path)
 
         if not os.access(path, os.W_OK):
-            raise PermissionError(path)
+            raise AccessDeniedError(path)
 
         label = shorten_start_menu_path(path)
         prefix = f"[{index}/{total}] " if total > 1 else ""
@@ -270,7 +295,11 @@ class StartMenuOrganizer:
         logger.info(f"  {ICONS['info']} 执行计划")
         logger.info(f"  {'─' * 40}")
 
-        plan_entry = {
+        reader_ok = self._shortcut_reader_available()
+        if self.config.check_shortcuts and not reader_ok:
+            logger.warning("  未安装 pywin32，无法校验快捷方式有效性（已跳过，不会误判为无效）")
+
+        plan_entry: Dict[str, Any] = {
             "path": path,
             "folders_to_process": [],
             "files_to_move": [],
@@ -284,6 +313,9 @@ class StartMenuOrganizer:
             self.dry_run_summary["total_files_to_move"] += 1
             logger.info(f"    {ICONS['move']} {shorten_start_menu_path(src)}")
             logger.info(f"      → {shorten_start_menu_path(dst)}")
+            if os.path.exists(dst):
+                self.dry_run_summary["total_files_overwritten"] += 1
+                logger.info(f"      {ICONS['warn']} 将覆盖同名文件（原文件移入回收站）")
 
         for folder in folders:
             folder_path = os.path.join(path, folder)
@@ -314,16 +346,23 @@ class StartMenuOrganizer:
                 short_path = shorten_start_menu_path(item_path)
                 logger.info(f"  {ICONS['delete']} {short_path}")
 
-            elif item.lower().endswith(".lnk") and self.config.check_shortcuts:
+            elif self.config.check_shortcuts and item.lower().endswith(
+                self.COM_SHORTCUT_EXTENSIONS
+            ):
                 plan_entry["shortcuts_to_validate"].append(item_path)
                 self.dry_run_summary["total_shortcuts_to_clean"] += 1
-                # 在预览阶段就验证快捷方式有效性
-                try:
-                    if not self._is_valid_shortcut(item_path):
+                # 在预览阶段就验证快捷方式有效性（无 pywin32 时不判，避免误报"全部无效"）
+                if reader_ok:
+                    try:
+                        verdict = self._is_valid_shortcut(item_path)
+                    except Exception:
+                        verdict = None
+                    if verdict is False:
                         self.dry_run_summary["total_shortcuts_invalid"] += 1
                         logger.info(f"  {ICONS['invalid']} {item}（无效快捷方式）")
-                except Exception:
-                    pass  # 验证失败时不计数，执行时再处理
+                    elif verdict is None:
+                        self.dry_run_summary["total_shortcuts_unreadable"] += 1
+                        logger.info(f"  {ICONS['warn']} {item}（无法读取，已跳过校验）")
 
         if self.config.backup_shortcuts:
             backup_count = sum(1 for _ in self._iter_shortcut_files(path))
@@ -335,10 +374,11 @@ class StartMenuOrganizer:
 
     def _update_impact_assessment(self) -> None:
         """更新影响评估等级。"""
+        # 注意：total_shortcuts_to_clean 是"扫描到的 .lnk 总数"，已包含其中的 invalid，
+        # 因此这里不再累加 to_clean，避免无效项被重复计数。
         total_operations = (
             self.dry_run_summary["total_files_to_move"] +
             self.dry_run_summary["total_files_to_delete"] +
-            self.dry_run_summary["total_shortcuts_to_clean"] +
             self.dry_run_summary["total_shortcuts_invalid"] +
             self.dry_run_summary["total_shortcuts_duplicate"]
         )
@@ -366,6 +406,16 @@ class StartMenuOrganizer:
         else:
             logger.info(f"  {ICONS['validate']} 快捷方式: 共 {found} 个（均有效）")
         logger.info(f"  {ICONS['dedupe']} 重复快捷方式: {summary['total_shortcuts_duplicate']}")
+        if summary["total_shortcuts_unreadable"]:
+            logger.info(
+                f"  {ICONS['warn']} 无法读取的快捷方式: {summary['total_shortcuts_unreadable']}"
+                "（已跳过，不会删除）"
+            )
+        if summary["total_files_overwritten"]:
+            logger.info(
+                f"  {ICONS['warn']} 将覆盖同名文件: {summary['total_files_overwritten']}"
+                "（原文件移入回收站）"
+            )
         if self.config.backup_shortcuts:
             logger.info(f"  {ICONS['backup']} 待备份快捷方式: {summary['total_shortcuts_to_backup']}")
         logger.info(f"  {ICONS['warn']} 影响评估: {summary['estimated_impact']}")
@@ -435,7 +485,7 @@ class StartMenuOrganizer:
                 elif os.path.isdir(item_path):
                     self._process_nested_folder(item_path, base_path)
 
-            send2trash.send2trash(folder_path)
+            _send_to_trash(folder_path)
             logger.debug(f"Removed empty folder: {folder_name}")
             self.stats["folders_processed"] += 1
             return True
@@ -461,9 +511,9 @@ class StartMenuOrganizer:
                 self._process_nested_folder(item_path, base_path)
 
         try:
-            send2trash.send2trash(source_path)
-        except Exception:
-            pass
+            _send_to_trash(source_path)
+        except Exception as e:
+            logger.debug(f"移除嵌套文件夹失败: {shorten_start_menu_path(source_path)} - {e}")
         logger.debug(f"移除嵌套文件夹: {shorten_start_menu_path(source_path)}")
 
     def _move_file(self, source: str, dest: str) -> None:
@@ -482,14 +532,22 @@ class StartMenuOrganizer:
 
         if os.path.exists(dest):
             if os.path.isfile(dest):
-                send2trash.send2trash(dest)
-                logger.debug(f"已覆盖同名文件: {shorten_start_menu_path(dest)}")
+                _send_to_trash(dest)
+                logger.info(
+                    f"  {ICONS['warn']} 覆盖同名文件（原文件已移入回收站）: "
+                    f"{shorten_start_menu_path(dest)}"
+                )
             else:
                 try:
-                    send2trash.send2trash(dest)
-                except Exception:
-                    pass
-                logger.debug(f"已覆盖同名文件夹: {shorten_start_menu_path(dest)}")
+                    _send_to_trash(dest)
+                except Exception as e:
+                    logger.debug(f"移动同名文件夹到回收站失败: {dest} - {e}")
+                logger.info(
+                    f"  {ICONS['warn']} 覆盖同名文件夹（原内容已移入回收站）: "
+                    f"{shorten_start_menu_path(dest)}"
+                )
+            self.stats["files_overwritten"] += 1
+            self._dashboard_sync()
 
         shutil.move(source, dest)
         logger.debug(f"已移动文件: {os.path.basename(source)}")
@@ -509,11 +567,11 @@ class StartMenuOrganizer:
             if any(keyword in item for keyword in self.config.delete_keywords):
                 try:
                     if os.path.isfile(item_path):
-                        send2trash.send2trash(item_path)
+                        _send_to_trash(item_path)
                         logger.info(f"  {ICONS['delete']} {item} → 回收站（关键词匹配）")
                         self.stats["files_deleted"] += 1
                     elif os.path.isdir(item_path):
-                        send2trash.send2trash(item_path)
+                        _send_to_trash(item_path)
                         logger.info(f"  {ICONS['delete']} {item} → 回收站（关键词文件夹匹配）")
                         self.stats["files_deleted"] += 1
                 except OSError as e:
@@ -522,24 +580,31 @@ class StartMenuOrganizer:
     def _clean_invalid_shortcuts(self, base_path: str) -> None:
         """Remove invalid .lnk shortcuts.
 
+        只有明确判定为无效（False）才删除；读取失败（None，如个别文件 COM 异常、
+        未安装 pywin32）一律跳过并告警，避免把读不出的快捷方式误删。
+
         Args:
             base_path: Path to clean.
         """
-        try:
-            from win32com.client import Dispatch  # noqa: F401
-        except ImportError:
+        if not self._shortcut_reader_available():
             logger.warning("未安装 pywin32，跳过快捷方式验证")
             return
 
         for item in os.listdir(base_path):
             item_path = os.path.join(base_path, item)
 
-            if not item.lower().endswith(".lnk") or not os.path.isfile(item_path):
+            if not item.lower().endswith(self.COM_SHORTCUT_EXTENSIONS):
+                continue
+            if not os.path.isfile(item_path):
                 continue
 
-            if not self._is_valid_shortcut(item_path):
+            verdict = self._is_valid_shortcut(item_path)
+            if verdict is None:
+                logger.warning(f"  {ICONS['warn']} {item} 无法读取，已跳过校验")
+                continue
+            if verdict is False:
                 try:
-                    send2trash.send2trash(item_path)
+                    _send_to_trash(item_path)
                     logger.info(f"  {ICONS['invalid']} {item} → 回收站（无效快捷方式）")
                     self.stats["shortcuts_cleaned"] += 1
                 except OSError as e:
@@ -626,9 +691,7 @@ class StartMenuOrganizer:
         Returns:
             实际移除的快捷方式数量。
         """
-        try:
-            from win32com.client import Dispatch  # noqa: F401
-        except ImportError:
+        if not self._shortcut_reader_available():
             logger.warning("未安装 pywin32，跳过重复快捷方式清理")
             return 0
 
@@ -655,16 +718,23 @@ class StartMenuOrganizer:
         return self._dedupe_shortcuts(valid_paths)
 
     def _collect_shortcut_exclusions(self, base_paths: List[str]) -> Set[str]:
-        """收集会被关键词/无效清理提前移除的根目录快捷方式（供 dry-run 去重比对排除）。"""
+        """收集会被关键词/无效清理提前移除的根目录快捷方式（供 dry-run 去重比对排除）。
+
+        仅把「明确判定为无效」的计入；读取失败（None）不排除，避免误判为将被删除。
+        """
         excluded: Set[str] = set()
         for base_path in base_paths:
             for item in os.listdir(base_path):
                 item_path = os.path.join(base_path, item)
                 if any(keyword in item for keyword in self.config.delete_keywords):
                     excluded.add(item_path)
-                elif item.lower().endswith(".lnk") and os.path.isfile(item_path):
-                    if not self._is_valid_shortcut(item_path):
-                        excluded.add(item_path)
+                    continue
+                if not item.lower().endswith(self.COM_SHORTCUT_EXTENSIONS):
+                    continue
+                if not os.path.isfile(item_path):
+                    continue
+                if self._is_valid_shortcut(item_path) is False:
+                    excluded.add(item_path)
         return excluded
 
     def _dedupe_shortcuts(self, base_paths: List[str]) -> int:
@@ -680,7 +750,7 @@ class StartMenuOrganizer:
         removed = 0
         for duplicate in self._find_duplicate_shortcuts(info_map):
             try:
-                send2trash.send2trash(duplicate)
+                _send_to_trash(duplicate)
                 logger.info(
                     f"  {ICONS['dedupe']} {shorten_start_menu_path(duplicate)} → 回收站（重复快捷方式）"
                 )
@@ -690,6 +760,16 @@ class StartMenuOrganizer:
             except OSError as e:
                 logger.error(f"  移除失败: {os.path.basename(duplicate)} - {e}")
         return removed
+
+    @staticmethod
+    def _shortcut_reader_available() -> bool:
+        """是否具备读取 .lnk 的能力（pywin32 / win32com）。"""
+        try:
+            from win32com.client import Dispatch  # noqa: F401
+
+            return True
+        except ImportError:
+            return False
 
     @staticmethod
     def _read_shortcut(shortcut_path: str) -> Dict[str, Any]:
@@ -718,11 +798,11 @@ class StartMenuOrganizer:
             return {"error": str(e)}
 
     @staticmethod
-    def _check_shortcut_target(info: Dict[str, Any]) -> bool:
+    def _check_shortcut_target(info: Dict[str, Any]) -> Optional[bool]:
         """验证快捷方式的目标是否有效。纯逻辑，不依赖 COM，可独立测试。
 
         验证规则（按优先级）：
-          1. 读取失败 → 无效
+          1. 读取失败 → None（无法判定，调用方应跳过并告警，绝不据此删除）
           2. 无 TargetPath 且无 Arguments 和 IconLocation → 无效
           3. 无 TargetPath 但有 Arguments 或 IconLocation → 有效（UWP/协议快捷方式）
           4. TargetPath 是特殊协议路径 → 有效
@@ -735,12 +815,12 @@ class StartMenuOrganizer:
             info: _read_shortcut() 返回的字典。
 
         Returns:
-            True 表示快捷方式有效，False 表示无效。
+            True 表示有效，False 表示无效，None 表示无法判定（读取失败）。
         """
-        # 规则 1：读取失败
+        # 规则 1：读取失败 —— 判定为"未知"，交由调用方跳过，避免把读不出的当作失效删除
         if "error" in info:
             logger.debug(f"快捷方式读取失败: {info['error']}")
-            return False
+            return None
 
         target = info.get("target_path", "")
         arguments = info.get("arguments", "")
@@ -782,6 +862,8 @@ class StartMenuOrganizer:
         if not path:
             return False
 
+        # 下面是一组"试探式"路径检查：任一方式抛异常只代表该探测法不适用，
+        # 继续尝试下一种即可，故这里刻意吞掉异常（非静默失败，属预期控制流）。
         # 尝试直接检查
         try:
             if os.path.exists(path):
@@ -837,14 +919,14 @@ class StartMenuOrganizer:
         # 路径不存在
         return False
 
-    def _is_valid_shortcut(self, shortcut_path: str) -> bool:
+    def _is_valid_shortcut(self, shortcut_path: str) -> Optional[bool]:
         """检查快捷方式是否有效。整合 COM 读取与目标验证。
 
         Args:
             shortcut_path: 快捷方式文件路径。
 
         Returns:
-            True 表示有效，False 表示无效。
+            True 表示有效，False 表示无效，None 表示无法判定（读取失败）。
         """
         info = self._read_shortcut(shortcut_path)
         return self._check_shortcut_target(info)
@@ -858,7 +940,7 @@ class StartMenuOrganizer:
             base_paths: 待扫描的路径列表（每个路径只扫描根目录）。
 
         Returns:
-            快捷方式路径到目标信息的字典（含 target_path / arguments）。
+            快捷方式路径到目标信息的字典（含 target_path / arguments / working_dir）。
         """
         info_map: Dict[str, Dict[str, str]] = {}
         for base_path in base_paths:
@@ -866,12 +948,15 @@ class StartMenuOrganizer:
                 continue
             for item in os.listdir(base_path):
                 item_path = os.path.join(base_path, item)
-                if not item.lower().endswith(".lnk") or not os.path.isfile(item_path):
+                if not item.lower().endswith(self.COM_SHORTCUT_EXTENSIONS):
+                    continue
+                if not os.path.isfile(item_path):
                     continue
                 info = self._read_shortcut(item_path)
                 info_map[item_path] = {} if "error" in info else {
                     "target_path": info.get("target_path", ""),
                     "arguments": info.get("arguments", ""),
+                    "working_dir": info.get("working_dir", ""),
                 }
         return info_map
 
@@ -895,11 +980,12 @@ class StartMenuOrganizer:
     def _shortcut_key(info: Dict[str, str]) -> str:
         """由 TargetPath + Arguments 生成去重比较键。
 
-        仅当 TargetPath 有效时才生成键（空目标不参与去重）；Arguments 保留大小写
-        并仅去除首尾空白，因为命令行参数可能是大小写敏感的。
+        仅当 TargetPath 有效时才生成键（空目标不参与去重）。相对目标会先按
+        WorkingDirectory 解析为绝对路径——否则两个同名相对目标会被误判为重复。
+        Arguments 保留大小写并仅去除首尾空白，因为命令行参数可能是大小写敏感的。
 
         Args:
-            info: 包含 target_path / arguments 的字典。
+            info: 包含 target_path / arguments / working_dir 的字典。
 
         Returns:
             比较键；无有效目标时返回空字符串。
@@ -907,6 +993,10 @@ class StartMenuOrganizer:
         target = StartMenuOrganizer._normalize_target(info.get("target_path", ""))
         if not target:
             return ""
+        if not os.path.isabs(target):
+            working_dir = StartMenuOrganizer._normalize_target(info.get("working_dir", ""))
+            if working_dir:
+                target = os.path.normpath(os.path.join(working_dir, target)).lower()
         arguments = (info.get("arguments") or "").strip()
         return f"{target}\x00{arguments}"
 

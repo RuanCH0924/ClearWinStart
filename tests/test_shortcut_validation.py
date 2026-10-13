@@ -2,14 +2,14 @@
 快捷方式有效性验证的单元测试。
 
 测试 _check_shortcut_target 和 _check_file_target 两个纯逻辑方法，
-不依赖 COM / pywin32，可在任何系统上运行。
+不依赖 COM / pywin32。注意：部分用例使用 Windows 路径语义（盘符、反斜杠），
+因此整套测试应在 Windows 上运行（见 CI 配置）。
 """
 
 import os
-import sys
 import tempfile
-import pytest
 
+from clear_win_start.config import Configuration
 from clear_win_start.core import StartMenuOrganizer
 
 
@@ -34,7 +34,10 @@ class TestCheckFileTarget:
 
     def test_nonexistent_path(self):
         """不存在的文件 → False"""
-        assert StartMenuOrganizer._check_file_target(r"C:\ThisPath\ShouldNot\Exist_ABCDE.exe") is False
+        assert (
+            StartMenuOrganizer._check_file_target(r"C:\ThisPath\ShouldNot\Exist_ABCDE.exe")
+            is False
+        )
 
     def test_nonexistent_drive(self):
         """不存在的盘符 → False"""
@@ -102,14 +105,14 @@ class TestCheckShortcutTarget:
     # ---- 无效场景 ----
 
     def test_read_error(self):
-        """读取失败 → False"""
+        """读取失败 → None（无法判定，调用方应跳过而非删除）"""
         info = {"error": "COM failure"}
-        assert StartMenuOrganizer._check_shortcut_target(info) is False
+        assert StartMenuOrganizer._check_shortcut_target(info) is None
 
     def test_pywin32_not_installed(self):
-        """pywin32 未安装 → False"""
+        """pywin32 未安装 → None（无法判定，调用方应跳过而非删除）"""
         info = {"error": "pywin32 not installed"}
-        assert StartMenuOrganizer._check_shortcut_target(info) is False
+        assert StartMenuOrganizer._check_shortcut_target(info) is None
 
     def test_empty_all(self):
         """所有字段为空 → False"""
@@ -255,7 +258,7 @@ class TestCheckShortcutTarget:
         assert StartMenuOrganizer._check_shortcut_target(info) is True
 
     def test_system32_notepad(self):
-        """指向 C:\Windows\System32\notepad.exe（真实存在的系统文件）"""
+        r"""指向 C:\Windows\System32\notepad.exe（真实存在的系统文件）"""
         existing = r"C:\Windows\System32\notepad.exe"
         if os.path.exists(existing):
             info = {
@@ -347,3 +350,52 @@ class TestCheckShortcutTargetEdgeCases:
             "icon_location": "",
         }
         assert StartMenuOrganizer._check_shortcut_target(info) is False
+
+
+# =============================================================================
+# _clean_invalid_shortcuts 三态行为（读不出的不能删）
+# =============================================================================
+
+
+class TestCleanInvalidShortcutsTriState:
+    """只有明确判定为无效（False）才删除；无法判定（None）必须跳过。"""
+
+    @staticmethod
+    def _organizer(verdict):
+        config = Configuration(user_name="tester", check_shortcuts=True)
+        organizer = StartMenuOrganizer(config)
+        organizer._shortcut_reader_available = lambda: True  # type: ignore[method-assign]
+        organizer._is_valid_shortcut = lambda path: verdict  # type: ignore[method-assign]
+        return organizer
+
+    def test_unreadable_is_not_deleted(self, tmp_path, monkeypatch):
+        trashed = []
+        monkeypatch.setattr("send2trash.send2trash", lambda path: trashed.append(path))
+        (tmp_path / "A.lnk").write_bytes(b"x")
+
+        organizer = self._organizer(None)
+        organizer._clean_invalid_shortcuts(str(tmp_path))
+
+        assert trashed == []
+        assert organizer.stats["shortcuts_cleaned"] == 0
+
+    def test_invalid_is_deleted(self, tmp_path, monkeypatch):
+        trashed = []
+        monkeypatch.setattr("send2trash.send2trash", lambda path: trashed.append(path))
+        (tmp_path / "A.lnk").write_bytes(b"x")
+
+        organizer = self._organizer(False)
+        organizer._clean_invalid_shortcuts(str(tmp_path))
+
+        assert len(trashed) == 1
+        assert organizer.stats["shortcuts_cleaned"] == 1
+
+    def test_valid_is_kept(self, tmp_path, monkeypatch):
+        trashed = []
+        monkeypatch.setattr("send2trash.send2trash", lambda path: trashed.append(path))
+        (tmp_path / "A.lnk").write_bytes(b"x")
+
+        organizer = self._organizer(True)
+        organizer._clean_invalid_shortcuts(str(tmp_path))
+
+        assert trashed == []

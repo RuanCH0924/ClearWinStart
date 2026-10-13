@@ -2,15 +2,18 @@
 
 **Windows 开始菜单整理工具** — 扁平化嵌套文件夹、清理无效快捷方式。
 
+**中文** | [English](README.en.md)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python versions](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/downloads/)
-[![GitHub release](https://img.shields.io/github/v/release/RuanCH/ClearWinStart)](https://github.com/RuanCH/ClearWinStart/releases)
+[![GitHub release](https://img.shields.io/github/v/release/RuanCH0924/ClearWinStart)](https://github.com/RuanCH0924/ClearWinStart/releases)
 
 ---
 
 ## 目录
 
 - [项目概述](#项目概述)
+- [演示](#演示)
 - [技术栈](#技术栈)
 - [快速开始](#快速开始)
 - [使用指南](#使用指南)
@@ -42,7 +45,7 @@ Windows 开始菜单的 `%APPDATA%\Microsoft\Windows\Start Menu\Programs` 目录
 |------|------|
 | **扁平化文件夹** | 将子文件夹中的快捷方式提取到 Programs 根目录，删除空文件夹 |
 | **关键词清理** | 删除文件名中包含指定关键词（如"卸载""帮助"）的快捷方式 |
-| **无效快捷方式检测** | 读取 `.lnk` 文件的 TargetPath，验证目标文件是否存在，不存在则移入回收站 |
+| **无效快捷方式检测** | 读取 `.lnk` 文件的 TargetPath，验证目标文件是否存在，不存在则移入回收站；**读不出的快捷方式一律跳过并告警，绝不判为无效**（`.url` 是 INI 文本、无法用 COM 读取，只参与备份） |
 | **重复快捷方式清理** | 跨所有待扫描目录比对，按 TargetPath + 启动参数（Arguments）分组，两者均相同的快捷方式只保留一个，其余移入回收站 |
 | **快捷方式备份** | 整理前将所有快捷方式（`.lnk`/`.url`）按原目录结构备份到当前用户桌面（自动识别 OneDrive 等重定向） |
 | **终端动态交互** | 全流程统一大屏：启动即进入一次全屏面板，初始化 / 配置向导 / 路径多选 / 执行 / 结果全程在同一块面板内原地刷新、不滚动；方向键菜单、颜色与宽度自适应；非交互环境自动降级为静态文本 |
@@ -54,6 +57,33 @@ Windows 开始菜单的 `%APPDATA%\Microsoft\Windows\Start Menu\Programs` 目录
 - **安全优先**：所有删除操作先移入回收站（通过 `send2trash`），而非永久删除
 - **保守验证**：快捷方式有效性判断以"宁可放过、不可误删"为原则
 - **操作可预览**：所有变更在执行前均可在预览模式中查看
+
+---
+
+## 演示
+
+启动后整个终端即成为一块**全屏面板**，从初始化到结果全程原地刷新、不滚动。面板示意（静态文本版，与交互式界面结构一致）：
+
+```text
+╔════════════════════════════════════════════════════════════╗
+║                 C L E A R W I N S T A R T                  ║
+║                  Windows 开始菜单整理工具                  ║
+╚════════════════════════════════════════════════════════════╝
+
+  ✓ 初始化 › ✓ 配置 › ● 路径选择 › ○ 执行 › ○ 结果
+
+  请选择要处理的路径
+  默认全部选中；可用空格逐项取舍
+
+  ❯ ◉ [USER] C:\Users\me\AppData\Roaming\Microsoft\Windows\Start Menu\Programs
+    ◉ [SYS]  C:\ProgramData\Microsoft\Windows\Start Menu\Programs
+
+  ↑/↓ 移动 · 空格 选择 · A 全选 · N 全不选 · Enter 确认 · Esc 取消
+```
+
+执行阶段会在同一块面板内刷新当前阶段、进度条、各项计数与"最近操作"日志；结束后展示统计结果并停留到按键。
+
+> 📸 **演示素材待补充**：本项目的差异化亮点是终端交互，欢迎贡献一段 30 秒左右的录屏 GIF（Windows Terminal 或 ConHost 均可），命名建议 `docs/demo.gif`，并在此处插入 `![demo](docs/demo.gif)`。
 
 ---
 
@@ -77,7 +107,6 @@ Windows 开始菜单的 `%APPDATA%\Microsoft\Windows\Start Menu\Programs` 目录
 | [black](https://black.readthedocs.io/) >= 23.0 | 代码格式化 |
 | [isort](https://pycqa.github.io/isort/) >= 5.12 | import 排序 |
 | [mypy](https://mypy-lang.org/) >= 1.0 | 类型检查 |
-| [tox](https://tox.wiki/) >= 4.0 | 多环境自动化测试 |
 
 ### 无外部依赖的核心逻辑
 
@@ -97,7 +126,7 @@ Windows 开始菜单的 `%APPDATA%\Microsoft\Windows\Start Menu\Programs` 目录
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/RuanCH/ClearWinStart.git
+git clone https://github.com/RuanCH0924/ClearWinStart.git
 cd ClearWinStart
 
 # 2. （推荐）创建虚拟环境
@@ -309,7 +338,7 @@ clear-win-start --no-animation
     ],
 
     "_comment_delete_keywords": "文件名包含这些关键词时会被移至回收站，留空则不删除",
-    "delete_keywords": ["卸载", "官网", "更新", "帮助", "意见", "设置", "关于"],
+    "delete_keywords": ["卸载", "官网", "更新", "帮助", "意见", "关于"],
 
     "_comment_check_shortcuts": "是否校验快捷方式有效性",
     "check_shortcuts": true,
@@ -360,8 +389,8 @@ ClearWinStart/
 │   └── test_ui.py                   # 统一大屏交互与全流程会话测试
 ├── default-config.json           # 默认配置文件
 ├── pyproject.toml                # 项目元数据 + 构建配置 + 工具配置
-├── tox.ini                       # tox 自动化测试配置
-├── README.md                     # 本文件
+├── README.md                     # 本文件（中文）
+├── README.en.md                  # English README
 └── LICENSE                       # MIT 许可证
 ```
 
@@ -419,9 +448,9 @@ StartMenuOrganizer
   │       │       └── _check_shortcut_target()   纯逻辑验证（8 条规则）
   │       │           └── _check_file_target()   Windows 路径存在性检查
   │       ├── _dedupe_across_paths()   跨所有待处理路径比对重复快捷方式
-  │       │   ├── _collect_shortcut_info()   跨路径收集 {快捷方式: 目标信息}
+  │       │   ├── _collect_shortcut_info()   跨路径收集 {快捷方式: 目标信息（含工作目录）}
   │       │   ├── _normalize_target()         规范化目标路径用于比较
-  │       │   ├── _shortcut_key()             TargetPath + Arguments 生成比较键
+  │       │   ├── _shortcut_key()             TargetPath（相对则按工作目录解析）+ Arguments 生成比较键
   │       │   ├── _find_duplicate_shortcuts() 按比较键分组找出重复项
   │       │   └── _dedupe_shortcuts()         执行移入回收站
   │       └── _backup_shortcuts()     整理前备份所有快捷方式
@@ -510,7 +539,7 @@ print(f"已移动文件: {stats['files_moved']}")
 
 ```bash
 # 克隆并安装开发依赖
-git clone https://github.com/RuanCH/ClearWinStart.git
+git clone https://github.com/RuanCH0924/ClearWinStart.git
 cd ClearWinStart
 python -m venv venv
 .\venv\Scripts\activate
@@ -549,15 +578,6 @@ black clear_win_start tests
 isort clear_win_start tests
 ```
 
-### tox 自动化
-
-```bash
-tox                    # 运行所有环境的测试
-tox -e lint            # 代码风格检查
-tox -e type            # 类型检查
-tox -e format          # 自动格式化
-```
-
 ### 测试覆盖场景
 
 快捷方式验证测试涵盖 38 个用例：
@@ -584,7 +604,7 @@ tox -e format          # 自动格式化
 pip install clear-win-start
 
 # 方式二：从源码安装
-git clone https://github.com/RuanCH/ClearWinStart.git
+git clone https://github.com/RuanCH0924/ClearWinStart.git
 cd ClearWinStart
 pip install -e ".[windows]"
 
@@ -596,12 +616,15 @@ clear-win-start --version
 
 项目使用 GitHub Actions（配置文件位于 `.github/workflows/ci.yml`），自动执行：
 
-| 阶段 | 操作 |
-|------|------|
-| 代码检查 | flake8 + black --check + isort --check-only |
-| 类型检查 | mypy |
-| 单元测试 | pytest --cov=clear_win_start |
-| Python 版本 | 3.8 / 3.9 / 3.10 / 3.11 / 3.12 |
+| 阶段 | 操作 | 失败影响 |
+|------|------|----------|
+| 代码检查 | flake8（`--max-line-length=100`） | **硬门禁**：失败即 CI 失败 |
+| 类型检查 | mypy | **硬门禁**：失败即 CI 失败 |
+| 单元测试 | pytest --cov=clear_win_start | **硬门禁**：失败即 CI 失败 |
+| 运行平台 | **仅 windows-latest**（本项目 Windows-only），Python 3.8 / 3.9 / 3.10 / 3.11 / 3.12 | — |
+
+> black / isort 仍作为本地格式化工具（见 `[dev]` 依赖），但不作为 CI 门禁——历史上它们被设为 `continue-on-error`，等于没检查。
+> 发布：推送 `v*` tag 时会构建并发布到 PyPI（需配置 `PYPI_API_TOKEN`）。
 
 ---
 
@@ -650,7 +673,7 @@ clear-win-start --version
 
 ### 问题反馈
 
-- GitHub Issues：https://github.com/RuanCH/ClearWinStart/issues
+- GitHub Issues：https://github.com/RuanCH0924/ClearWinStart/issues
 
 ---
 
@@ -696,9 +719,12 @@ chcp 65001
 
 **Q: 快捷方式验证结果显示均为有效，但我确认有无效快捷方式**
 
-在文件目录中手动检查：删除一个 `test_invalid.lnk` 快捷方式后运行 `clear-win-start --preview --user-name 用户名 --verbose`，查看调试日志输出。如果问题持续，请在 GitHub Issues 提交报告。
+两种情况分开看：
 
-**Q: 运行时报 `PermissionError`**
+- 未安装 `pywin32`：无法读取任何 `.lnk`，此时工具会**跳过**校验并提示"未安装 pywin32"，不会误报。请安装 `pip install pywin32`（或 `pip install -e ".[windows]"`）。
+- 个别 `.lnk` 读取失败：会在预览/日志中显示为「无法读取，已跳过校验」，并计入摘要的"无法读取"一项；出于安全考虑不会被删除。可用 `--preview --verbose` 查看调试日志，确认后到 GitHub Issues 反馈。
+
+**Q: 提示 `AccessDeniedError: Permission denied ...`**
 
 对开始菜单目录没有写权限。右键目录 → 属性 → 安全 → 编辑，为当前用户添加"修改"权限。
 

@@ -8,7 +8,7 @@ on:
 
 jobs:
   lint:
-    name: Lint Code
+    name: Lint & Type Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,34 +21,25 @@ jobs:
       - name: Install linting tools
         run: |
           python -m pip install --upgrade pip
-          pip install flake8 black isort mypy
+          pip install flake8 mypy
 
+      # 硬门禁：以下步骤任一失败即判定 CI 失败（不再 continue-on-error）
       - name: Lint with flake8
         run: |
           flake8 clear_win_start tests --max-line-length=100 --extend-ignore=E203,W503
-        continue-on-error: true
-
-      - name: Check black formatting
-        run: |
-          black --check clear_win_start tests
-        continue-on-error: true
-
-      - name: Check isort formatting
-        run: |
-          isort --check-only clear_win_start tests
-        continue-on-error: true
 
       - name: Type check with mypy
         run: |
           mypy clear_win_start --ignore-missing-imports
-        continue-on-error: true
 
   test:
-    name: Test on Python ${{ matrix.python-version }}
-    runs-on: ${{ matrix.os }}
+    # 本项目为 Windows-only：测试依赖 Windows 路径语义、回收站与 Shell Link(COM)，
+    # 因此只在 windows-latest 上跑，不再假装支持 Ubuntu。
+    name: Test on Windows / Python ${{ matrix.python-version }}
+    runs-on: windows-latest
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
         python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
 
     steps:
@@ -69,8 +60,8 @@ jobs:
           pytest --cov=clear_win_start --cov-report=xml --cov-report=term tests/
 
       - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.11'
         uses: codecov/codecov-action@v4
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         with:
           file: ./coverage.xml
           fail_ci_if_error: false

@@ -50,20 +50,21 @@ windows = [
     "pywin32>=228; sys_platform=='win32'",
 ]
 dev = [
-    "ClearWinStart[windows]",
+    "pywin32>=228; sys_platform=='win32'",
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
     "flake8>=6.0",
     "black>=23.0",
     "isort>=5.12",
     "mypy>=1.0",
-    "tox>=4.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/RuanCH/ClearWinStart"
-Documentation = "https://github.com/RuanCH/ClearWinStart#readme"
-Repository = "https://github.com/RuanCH/ClearWinStart.git"
-Issues = "https://github.com/RuanCH/ClearWinStart/issues"
-Discussions = "https://github.com/RuanCH/ClearWinStart/discussions"
+Homepage = "https://github.com/RuanCH0924/ClearWinStart"
+Documentation = "https://github.com/RuanCH0924/ClearWinStart#readme"
+Repository = "https://github.com/RuanCH0924/ClearWinStart.git"
+Issues = "https://github.com/RuanCH0924/ClearWinStart/issues"
+Discussions = "https://github.com/RuanCH0924/ClearWinStart/discussions"
 
 [project.scripts]
 clear-win-start = "clear_win_start.cli:main"
@@ -103,7 +104,8 @@ ensure_newline_before_comments = true
 skip = [".git", ".venv", "build", "dist"]
 
 [tool.mypy]
-python_version = "3.8"
+# 注：mypy 已不支持把 python_version 设为 3.8；这里取允许的最低值 3.9。
+python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true

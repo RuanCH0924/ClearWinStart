@@ -3,7 +3,7 @@
 
 覆盖 _normalize_target、_shortcut_key、_find_duplicate_shortcuts 三个纯逻辑方法，
 以及 _dedupe_shortcuts 的跨路径执行流程（通过桩替 COM 与回收站）。
-测试不依赖 pywin32 / COM，可在任何系统上运行。
+测试不依赖 pywin32 / COM，但涉及 Windows 路径语义，需在 Windows 上运行。
 """
 
 import os
@@ -82,6 +82,30 @@ class TestFindDuplicateShortcuts:
         }
         duplicates = StartMenuOrganizer._find_duplicate_shortcuts(mapping)
         assert duplicates == [r"C:\Menu\chrome - 副本.lnk"]
+
+    def test_relative_target_resolved_by_working_dir(self):
+        """相对目标按 WorkingDirectory 解析：不同工作目录下同名相对目标不算重复"""
+        mapping = {
+            r"C:\Menu\a.lnk": {
+                "target_path": "app.exe", "arguments": "", "working_dir": r"C:\A",
+            },
+            r"C:\Menu\b.lnk": {
+                "target_path": "app.exe", "arguments": "", "working_dir": r"C:\B",
+            },
+        }
+        assert StartMenuOrganizer._find_duplicate_shortcuts(mapping) == []
+
+    def test_relative_target_same_working_dir_is_duplicate(self):
+        """相对目标 + 相同工作目录 → 解析后与绝对目标一致，视为重复"""
+        mapping = {
+            r"C:\Menu\a.lnk": {
+                "target_path": "app.exe", "arguments": "", "working_dir": r"C:\A",
+            },
+            r"C:\Menu\b.lnk": {
+                "target_path": r"C:\A\app.exe", "arguments": "", "working_dir": r"C:\A",
+            },
+        }
+        assert StartMenuOrganizer._find_duplicate_shortcuts(mapping) == [r"C:\Menu\b.lnk"]
 
     def test_keeps_first_alphabetically(self):
         """同组内文件名长度相同 → 保留名称排序最靠前者"""

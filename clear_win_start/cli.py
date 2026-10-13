@@ -278,6 +278,7 @@ def _stats_lines(screen: Screen, stats: dict,
     rows = [
         ("已处理文件夹", stats.get("folders_processed", 0)),
         ("已移动文件", stats.get("files_moved", 0)),
+        ("覆盖同名文件", stats.get("files_overwritten", 0)),
         ("已删除文件/文件夹", stats.get("files_deleted", 0)),
         ("已清理无效快捷方式", stats.get("shortcuts_cleaned", 0)),
         ("已去重快捷方式", stats.get("shortcuts_deduped", 0)),
@@ -841,6 +842,32 @@ def create_preview_from_plan(plan: List[dict], summary: dict, paths: List[str],
                 reason="目标不存在",
             ),
             "无效快捷方式",
+        )
+
+    unreadable = summary.get("total_shortcuts_unreadable", 0)
+    if unreadable > 0:
+        report.add_item(
+            "unreadable",
+            ICONS["warn"],
+            PreviewItem(
+                action=ActionType.SKIP,
+                name=f"共 {unreadable} 个快捷方式无法读取",
+                reason="已跳过校验，不会删除",
+            ),
+            "无法读取",
+        )
+
+    overwritten = summary.get("total_files_overwritten", 0)
+    if overwritten > 0:
+        report.add_item(
+            "overwrite",
+            ICONS["warn"],
+            PreviewItem(
+                action=ActionType.SKIP,
+                name=f"共 {overwritten} 个同名文件将被覆盖",
+                reason="原文件移入回收站",
+            ),
+            "同名覆盖",
         )
 
     backup = summary.get("total_shortcuts_to_backup", 0)

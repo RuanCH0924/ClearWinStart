@@ -2,7 +2,8 @@
 快捷方式备份功能的单元测试。
 
 覆盖 _iter_shortcut_files、_backup_label、_backup_shortcuts 以及默认备份目录
-get_default_backup_dir。测试不依赖 pywin32 / COM，可在任何系统上运行。
+get_default_backup_dir。测试不依赖 pywin32 / COM，但涉及 Windows 路径语义与桌面
+定位，需在 Windows 上运行。
 """
 
 import os
@@ -169,6 +170,50 @@ class TestBackupShortcuts:
 
         assert count == 1
         assert organizer.stats["shortcuts_backed_up"] == 1
+
+
+# =============================================================================
+# 同名覆盖（原文件进回收站 + 计入统计）
+# =============================================================================
+
+
+class TestOverwriteReporting:
+    """移动时遇到同名文件：原文件移入回收站、计入 files_overwritten、新文件就位。"""
+
+    def test_overwrite_counts_and_trashes_destination(self, tmp_path, monkeypatch):
+        trashed = []
+        monkeypatch.setattr("send2trash.send2trash", lambda path: trashed.append(path))
+
+        menu = tmp_path / "menu"
+        menu.mkdir()
+        source = menu / "New.lnk"
+        source.write_bytes(b"new")
+        dest = menu / "Old.lnk"
+        dest.write_bytes(b"old")
+
+        organizer = _make_organizer(tmp_path)
+        organizer._move_file(str(source), str(dest))
+
+        assert organizer.stats["files_overwritten"] == 1
+        assert len(trashed) == 1
+        assert dest.read_bytes() == b"new"
+        assert not source.exists()
+
+    def test_no_overwrite_when_destination_absent(self, tmp_path, monkeypatch):
+        trashed = []
+        monkeypatch.setattr("send2trash.send2trash", lambda path: trashed.append(path))
+
+        source = tmp_path / "New.lnk"
+        source.write_bytes(b"new")
+        dest = tmp_path / "sub" / "Target.lnk"
+        dest.parent.mkdir()
+
+        organizer = _make_organizer(tmp_path)
+        organizer._move_file(str(source), str(dest))
+
+        assert organizer.stats["files_overwritten"] == 0
+        assert trashed == []
+        assert dest.read_bytes() == b"new"
 
 
 # =============================================================================

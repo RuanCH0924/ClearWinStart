@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import List, Optional, Protocol
+from typing import Iterable, List, Optional, Protocol
 
 from clear_win_start.paths import build_default_paths, expand_env_vars
 
@@ -14,6 +14,10 @@ __all__ = ["Configuration", "ConfigurationWizard", "ConsolePrompter", "confirm_a
 
 
 logger = logging.getLogger(__name__)
+
+# 「未配置」哨兵：区分「用户没写」（沿用默认值）与「用户显式写了空列表」（真的不启用）。
+# 构造后 Configuration 里不会再残留该对象，外部拿到的始终是普通 list。
+_UNSET: List[str] = []
 
 
 class ConfigurationError(Exception):
@@ -111,8 +115,8 @@ class Configuration:
 
     user_name: str
     paths: List[str] = field(default_factory=list)
-    neglect_folders: List[str] = field(default_factory=list)
-    delete_keywords: List[str] = field(default_factory=list)
+    neglect_folders: List[str] = field(default_factory=lambda: _UNSET)
+    delete_keywords: List[str] = field(default_factory=lambda: _UNSET)
     check_shortcuts: bool = False
     dedupe_shortcuts: bool = False
     backup_shortcuts: bool = False
@@ -128,9 +132,10 @@ class Configuration:
         else:
             self.paths = [expand_env_vars(p) for p in self.paths]
 
-        if not self.neglect_folders:
+        # 仅当"未配置"时回退默认值；显式传入的空列表表示"确实不启用"
+        if self.neglect_folders is _UNSET:
             self.neglect_folders = DefaultConfig.NEGLECT_FOLDERS.copy()
-        if not self.delete_keywords:
+        if self.delete_keywords is _UNSET:
             self.delete_keywords = DefaultConfig.DELETE_KEYWORDS.copy()
         if self.backup_dir:
             self.backup_dir = expand_env_vars(self.backup_dir)
@@ -138,10 +143,9 @@ class Configuration:
     @classmethod
     def from_file(cls, config_path: str) -> "Configuration":
         """从 JSON 配置文件加载 Configuration。"""
-        from clear_win_start.core import PathNotFoundError
-
         if not os.path.exists(config_path):
-            raise PathNotFoundError(config_path)
+            # 用本模块自己的异常，避免 config → core 的反向依赖
+            raise ConfigurationError(f"Config file not found: {config_path}")
 
         try:
             with open(config_path, "r", encoding="utf-8") as f:
@@ -152,11 +156,22 @@ class Configuration:
         if "user_name" not in data:
             raise ConfigurationError("Missing required field: user_name")
 
+        # 「未配置」保留哨兵 → 沿用默认值；「显式空列表」原样保留 → 真的不启用
+        neglect_folders = _UNSET
+        raw_folders = data.get("neglect_folders", _UNSET)
+        if isinstance(raw_folders, list):
+            neglect_folders = raw_folders
+
+        delete_keywords = _UNSET
+        raw_keywords = data.get("delete_keywords", _UNSET)
+        if isinstance(raw_keywords, (list, dict)):
+            delete_keywords = _normalize_keywords(raw_keywords)
+
         return cls(
             user_name=data["user_name"],
             paths=_normalize_paths(data.get("paths", [])),
-            neglect_folders=data.get("neglect_folders", []),
-            delete_keywords=_normalize_keywords(data.get("delete_keywords", [])),
+            neglect_folders=neglect_folders,
+            delete_keywords=delete_keywords,
             check_shortcuts=data.get("check_shortcuts", False),
             dedupe_shortcuts=data.get("dedupe_shortcuts", False),
             backup_shortcuts=data.get("backup_shortcuts", False),
@@ -200,6 +215,7 @@ class Configuration:
 
 def _normalize_paths(raw) -> List[str]:
     """接受 list 或 dict，统一返回展开环境变量后的路径列表。"""
+    items: Iterable[object]
     if isinstance(raw, dict):
         items = raw.values()
     elif isinstance(raw, list):
@@ -315,8 +331,10 @@ class ConfigurationWizard:
         "Maintenance", "StartUp",
     ]
 
+    # 说明：仅保留语义明确的入口类词（卸载/官网/更新/帮助/意见/关于）。
+    # 早期版本还含"设置"，该词过于宽泛（会命中"Windows 设置"等合法入口），已移除。
     DEFAULT_DELETE_KEYWORDS: List[str] = [
-        "卸载", "官网", "更新", "帮助", "意见", "设置", "关于",
+        "卸载", "官网", "更新", "帮助", "意见", "关于",
         "install", "Website", "Setting", "Documentation", "Help", ".url",
     ]
 
@@ -391,7 +409,7 @@ class ConfigurationWizard:
         prompter.section("Step 4: Keywords to Delete")
         prompter.note(
             "\nFiles and folders containing these keywords will be automatically deleted:\n"
-            "  - Chinese: 卸载, 官网, 更新, 帮助, 意见, 设置, 关于\n"
+            "  - Chinese: 卸载, 官网, 更新, 帮助, 意见, 关于\n"
             "  - English: install, Website, Setting, Documentation, Help\n"
             "  - Other: .url (URL shortcuts)\n"
         )

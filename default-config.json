@@ -27,7 +27,7 @@
     ],
 
     "_comment_delete_keywords": "文件/文件夹名包含这些关键词时会被移至回收站，留空则不删除任何文件",
-    "delete_keywords": ["卸载", "官网", "更新", "帮助", "意见", "设置", "关于"],
+    "delete_keywords": ["卸载", "官网", "更新", "帮助", "意见", "关于"],
 
     "_comment_check_shortcuts": "是否校验快捷方式有效性，设为 true 时无效的 .lnk 会被移至回收站",
     "check_shortcuts": true,
